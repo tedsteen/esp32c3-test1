@@ -37,6 +37,31 @@ async fn update_led(mut rng: Rng) {
 async fn main(spawner: Spawner) {
     init_logger_from_env();
     let peripherals = esp_hal::init(esp_hal::Config::default());
+
+    // // Create handles for SPI pins
+    // let sclk = peripherals.GPIO0;
+    // let mosi = peripherals.GPIO2;
+    // let cs = peripherals.GPIO3;
+
+    // // Instantiate SPI Driver
+    // let spi_drv = SpiDriver::new(
+    //     peripherals.SPI2,
+    //     sclk,
+    //     mosi,
+    //     None::<gpio::AnyIOPin>,
+    //     &SpiDriverConfig::new(),
+    // )
+    // .unwrap();
+
+    // // Configure Parameters for SPI device
+    // let config = Config::new().baudrate(2.MHz().into()).data_mode(Mode {
+    //     polarity: Polarity::IdleLow,
+    //     phase: Phase::CaptureOnFirstTransition,
+    // });
+
+    // // Instantiate SPI Device Driver and Pass Configuration
+    // let mut spi = SpiDeviceDriver::new(spi_drv, Some(cs), &config).unwrap();
+
     *LED.lock().await = Some(Output::new(peripherals.GPIO7, Level::Low));
 
     let rng = Rng::new(peripherals.RNG);

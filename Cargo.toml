@@ -13,16 +13,31 @@ doctest = false
 bench = false
 
 [dependencies]
+# Embassy
+embassy-executor = { version = "0.6", features = ["task-arena-size-12288"] }
+embassy-sync = "0.6"
+embassy-time = "0.3"
+
+# TODO: This seem to be needed to be able the SpiDriver for the MAX7219
+# Hardware Abstraction Layer
+# embedded-hal = "1"
+# embedded-hal-async = "1"
+# embedded-hal-bus = { version = "0.2", features = ["async"] }
+# embedded-io-async = "0.6"
+# esp-idf-hal = "0.44"
+
+# ESP specifics
 esp-hal = { version = "0.22", features = ["esp32c3"] }
+esp-hal-embassy = { version = "0.5", features = [
+    "esp32c3",
+    "integrated-timers",
+] }
 esp-backtrace = { version = "0.14", features = [
     "esp32c3",
     "panic-handler",
     "exception-handler",
-    "println"
+    "println",
 ] }
 esp-println = { version = "0.12", features = ["esp32c3", "log"] }
+
 log = "0.4"
-esp-hal-embassy = { version = "0.5", features = ["esp32c3", "integrated-timers"] }
-embassy-executor = { version = "0.6", features = ["task-arena-size-12288"] }
-embassy-time = "0.3"
-embassy-sync = "0.6"
