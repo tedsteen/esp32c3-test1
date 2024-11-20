@@ -1,0 +1,28 @@
+[package]
+name = "esp32c3_test1"
+version = "0.1.0"
+authors = ["apollolabsdev <apollolabs.bin@gmail.com>"]
+edition = "2021"
+license = "MIT OR Apache-2.0"
+
+[[bin]]
+name = "esp32c3_test1"
+path = "src/main.rs"
+test = false
+doctest = false
+bench = false
+
+[dependencies]
+esp-hal = { version = "0.22", features = ["esp32c3"] }
+esp-backtrace = { version = "0.14", features = [
+    "esp32c3",
+    "panic-handler",
+    "exception-handler",
+    "println"
+] }
+esp-println = { version = "0.12", features = ["esp32c3", "log"] }
+log = "0.4"
+esp-hal-embassy = { version = "0.5", features = ["esp32c3", "integrated-timers"] }
+embassy-executor = { version = "0.6", features = ["task-arena-size-12288"] }
+embassy-time = "0.3"
+embassy-sync = "0.6"
