@@ -1,7 +1,7 @@
 [package]
 name = "esp32c3_test1"
 version = "0.1.0"
-authors = ["apollolabsdev <apollolabs.bin@gmail.com>"]
+authors = [""]
 edition = "2021"
 license = "MIT OR Apache-2.0"
 
@@ -12,6 +12,13 @@ test = false
 doctest = false
 bench = false
 
+[profile.release]
+opt-level = "s"
+
+[profile.dev]
+debug = true    # Symbols are nice and they don't increase the size on Flash
+opt-level = "z"
+
 [dependencies]
 # Embassy
 embassy-executor = { version = "0.6", features = ["task-arena-size-12288"] }
@@ -20,10 +27,6 @@ embassy-time = "0.3"
 
 # Hardware Abstraction Layer (For the SPI driver to communicate with the MAX7219)
 embedded-hal = "1"
-embedded-hal-bus = { version = "0.2", features = ["async"] }
-# embedded-hal-async = "1"
-# embedded-io-async = "0.6"
-# esp-idf-hal = "0.44"
 
 # ESP specifics
 esp-hal = { version = "0.22", features = ["esp32c3"] }

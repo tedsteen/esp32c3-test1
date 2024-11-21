@@ -42,24 +42,23 @@ async fn main(spawner: Spawner) {
     // See this: https://dev.to/theembeddedrustacean/esp32-standard-library-embedded-rust-spi-with-the-max7219-led-dot-matrix-1ge0
     // and this: https://dev.to/theembeddedrustacean/esp32-embedded-rust-at-the-hal-spi-communication-30a4
     // use esp_hal::spi::SpiMode;
-    // use fugit::HertzU32;
-
-    // let sclk = Input::new(peripherals.GPIO7, Pull::Down);
-    // let miso = Input::new(peripherals.GPIO6, Pull::Down);
-    // let cs = Input::new(peripherals.GPIO4, Pull::Down);
+    // let sclk = Input::new(peripherals.GPIO0, Pull::Down);
+    // let mosi = Input::new(peripherals.GPIO2, Pull::Down);
+    // let cs = Input::new(peripherals.GPIO3, Pull::Down);
 
     // let mut spi = esp_hal::spi::master::Spi::new_with_config(
     //     peripherals.SPI2,
     //     esp_hal::spi::master::Config {
-    //         frequency: HertzU32::MHz(2),
+    //         frequency: fugit::HertzU32::MHz(2),
     //         mode: SpiMode::Mode0,
     //         read_bit_order: esp_hal::spi::SpiBitOrder::LSBFirst,
     //         write_bit_order: esp_hal::spi::SpiBitOrder::LSBFirst,
     //     },
     // )
     // .with_sck(sclk)
-    // .with_miso(miso)
+    // .with_mosi(mosi)
     // .with_cs(cs);
+
     // spi.write_byte(3).expect("a byte to be written");
 
     *LED.lock().await = Some(Output::new(peripherals.GPIO7, Level::Low));
