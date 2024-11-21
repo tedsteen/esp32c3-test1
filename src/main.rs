@@ -11,6 +11,7 @@ use esp_hal::{
     timer::timg::TimerGroup,
 };
 use esp_println::logger::init_logger_from_env;
+use log::info;
 
 type LedMutex<'a> = Mutex<CriticalSectionRawMutex, Option<Output<'a>>>;
 static LED: LedMutex = Mutex::new(None);
@@ -38,36 +39,35 @@ async fn main(spawner: Spawner) {
     init_logger_from_env();
     let peripherals = esp_hal::init(esp_hal::Config::default());
 
-    // // Create handles for SPI pins
-    // let sclk = peripherals.GPIO0;
-    // let mosi = peripherals.GPIO2;
-    // let cs = peripherals.GPIO3;
+    // See this: https://dev.to/theembeddedrustacean/esp32-standard-library-embedded-rust-spi-with-the-max7219-led-dot-matrix-1ge0
+    // and this: https://dev.to/theembeddedrustacean/esp32-embedded-rust-at-the-hal-spi-communication-30a4
+    // use esp_hal::spi::SpiMode;
+    // use fugit::HertzU32;
 
-    // // Instantiate SPI Driver
-    // let spi_drv = SpiDriver::new(
+    // let sclk = Input::new(peripherals.GPIO7, Pull::Down);
+    // let miso = Input::new(peripherals.GPIO6, Pull::Down);
+    // let cs = Input::new(peripherals.GPIO4, Pull::Down);
+
+    // let mut spi = esp_hal::spi::master::Spi::new_with_config(
     //     peripherals.SPI2,
-    //     sclk,
-    //     mosi,
-    //     None::<gpio::AnyIOPin>,
-    //     &SpiDriverConfig::new(),
+    //     esp_hal::spi::master::Config {
+    //         frequency: HertzU32::MHz(2),
+    //         mode: SpiMode::Mode0,
+    //         read_bit_order: esp_hal::spi::SpiBitOrder::LSBFirst,
+    //         write_bit_order: esp_hal::spi::SpiBitOrder::LSBFirst,
+    //     },
     // )
-    // .unwrap();
-
-    // // Configure Parameters for SPI device
-    // let config = Config::new().baudrate(2.MHz().into()).data_mode(Mode {
-    //     polarity: Polarity::IdleLow,
-    //     phase: Phase::CaptureOnFirstTransition,
-    // });
-
-    // // Instantiate SPI Device Driver and Pass Configuration
-    // let mut spi = SpiDeviceDriver::new(spi_drv, Some(cs), &config).unwrap();
+    // .with_sck(sclk)
+    // .with_miso(miso)
+    // .with_cs(cs);
+    // spi.write_byte(3).expect("a byte to be written");
 
     *LED.lock().await = Some(Output::new(peripherals.GPIO7, Level::Low));
 
     let rng = Rng::new(peripherals.RNG);
 
     let mut button = Input::new(peripherals.GPIO9, Pull::Down);
-    log::info!("Init!");
+    info!("Init!");
 
     let timg0 = TimerGroup::new(peripherals.TIMG0);
     esp_hal_embassy::init(timg0.timer0);
@@ -81,10 +81,10 @@ async fn main(spawner: Spawner) {
             if led.is_set_high() {
                 points += 1;
             } else {
-                log::info!("FAIL!");
+                info!("FAIL!");
                 points = 0;
             }
-            log::info!("Points: {}", points);
+            info!("Points: {}", points);
         }
     }
 }

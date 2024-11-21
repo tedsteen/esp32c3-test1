@@ -18,11 +18,10 @@ embassy-executor = { version = "0.6", features = ["task-arena-size-12288"] }
 embassy-sync = "0.6"
 embassy-time = "0.3"
 
-# TODO: This seem to be needed to be able the SpiDriver for the MAX7219
-# Hardware Abstraction Layer
-# embedded-hal = "1"
+# Hardware Abstraction Layer (For the SPI driver to communicate with the MAX7219)
+embedded-hal = "1"
+embedded-hal-bus = { version = "0.2", features = ["async"] }
 # embedded-hal-async = "1"
-# embedded-hal-bus = { version = "0.2", features = ["async"] }
 # embedded-io-async = "0.6"
 # esp-idf-hal = "0.44"
 
@@ -40,4 +39,6 @@ esp-backtrace = { version = "0.14", features = [
 ] }
 esp-println = { version = "0.12", features = ["esp32c3", "log"] }
 
+# Other stuff
+fugit = "0.3"
 log = "0.4"
