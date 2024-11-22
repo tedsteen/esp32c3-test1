@@ -15,7 +15,77 @@ use esp_hal::{
     Blocking,
 };
 use esp_println::logger::init_logger_from_env;
-use log::info;
+use log::{debug, info};
+
+struct DotMatrix<'a> {
+    buffer: [u8; 8],
+    intensity: u8,
+    spi: Spi<'a, Blocking>,
+}
+
+impl<'a> DotMatrix<'a> {
+    fn new(mut spi: Spi<'a, Blocking>) -> Self {
+        // Power Up Device
+        spi.write_bytes(&[0x0C, 0x01]).expect("bytes to be written");
+
+        // Set up Decode Mode to work with the MAX2719
+        spi.write_bytes(&[0x09, 0x00]).expect("bytes to be written");
+
+        //Configure Scan Limit to work with the MAX2719
+        spi.write_bytes(&[0x0b, 0x07]).expect("bytes to be written");
+        let mut s = Self {
+            buffer: [0; 8],
+            intensity: 0xFF,
+            spi,
+        };
+        s.set_intensity(0x0F);
+        s
+    }
+
+    // NOTE: Max intensity is 0x0F
+    fn set_intensity(&mut self, intensity: u8) {
+        if self.intensity != intensity {
+            self.intensity = intensity;
+            debug!("Write intensity: 0x{:01x}", intensity);
+            self.spi
+                .write_bytes(&[0x0a, intensity])
+                .expect("bytes to be written");
+        }
+    }
+
+    fn fill(&mut self) {
+        debug!("Fill");
+        for addr in 1..=8 {
+            self.buffer[addr - 1] = 0xff;
+        }
+    }
+
+    fn clear(&mut self) {
+        debug!("Clear");
+        for addr in 1..=8 {
+            self.buffer[addr - 1] = 0;
+        }
+    }
+
+    fn put(&mut self, x: u8, y: u8) {
+        self.buffer[y as usize] |= (0b10000000 >> x) as u8;
+    }
+
+    fn set_row(&mut self, row: u8, row_data: u8) {
+        self.buffer[row as usize] = row_data;
+    }
+
+    fn flush_buffer_to_spi(&mut self) {
+        for i in 0..8 {
+            self.spi
+                .write_bytes(&[i + 1, self.buffer[i as usize]])
+                .expect("buffer to be written to spi");
+        }
+    }
+}
+
+type DotMatrixMutex<'a> = Mutex<CriticalSectionRawMutex, Option<DotMatrix<'a>>>;
+static DOT_MATRIX: DotMatrixMutex = Mutex::new(None);
 
 #[derive(Debug, Clone)]
 enum PadPosition {
@@ -36,7 +106,6 @@ impl PadPosition {
     }
 
     fn draw(&mut self, dot_matrix: &mut DotMatrix) {
-        //TODO
         match self {
             PadPosition::Left => {
                 for y in 0..8 {
@@ -57,50 +126,90 @@ impl PadPosition {
         }
     }
 }
+const MAX_HEALTH: u8 = 4;
 
-struct DotMatrix<'a> {
-    buffer: [u8; 8],
-    spi: Spi<'a, Blocking>,
+#[derive(Clone, Debug)]
+enum PadAliveState {
+    Normal,
+    Hurting(i64),
+    Dying(i64),
 }
 
-impl<'a> DotMatrix<'a> {
-    fn new(spi: Spi<'a, Blocking>) -> Self {
-        Self {
-            buffer: [0; 8],
-            spi,
+#[derive(Clone, Debug)]
+enum PadState {
+    Alive {
+        state: PadAliveState,
+        position: PadPosition,
+        health: u8,
+    },
+    Dead,
+}
+
+impl PadState {
+    const fn new() -> Self {
+        Self::Alive {
+            state: PadAliveState::Normal,
+            position: PadPosition::Bottom,
+            health: MAX_HEALTH,
         }
     }
 
-    fn clear(&mut self) {
-        for addr in 1..=8 {
-            self.buffer[addr - 1] = 0;
+    fn take_damage(&mut self) {
+        if let PadState::Alive {
+            health,
+            state: alive_state,
+            ..
+        } = self
+        {
+            *health -= 1;
+            info!("Health: {}", health);
+            if *health == 0 {
+                info!("YOU DED!");
+                *alive_state = PadAliveState::Dying(1000)
+            } else {
+                *alive_state = PadAliveState::Hurting(200);
+            }
         }
     }
 
-    fn put(&mut self, x: u8, y: u8) {
-        assert!((0..8).contains(&x), "x must be between 0 and 7");
-        assert!((0..8).contains(&y), "y must be between 0 and 7");
-        let column = (0b10000000 >> x) as u8;
-        let row = y;
-        self.buffer[row as usize] |= column;
-    }
-
-    fn set_row(&mut self, row: u8, row_data: u8) {
-        self.buffer[row as usize] = row_data;
-    }
-
-    fn flush_buffer_to_spi(&mut self) {
-        for i in 0..8 {
-            self.spi
-                .write_bytes(&[i + 1, self.buffer[i as usize]])
-                .expect("buffer to be written to spi");
-            self.buffer[i as usize] = 0;
+    fn update(&mut self, delta_time_ms: u64) -> PadUpdateResult {
+        match self {
+            PadState::Alive {
+                state: alive_state, ..
+            } => {
+                match alive_state {
+                    PadAliveState::Normal => {}
+                    PadAliveState::Hurting(countdown) => {
+                        *countdown -= delta_time_ms as i64;
+                        if *countdown <= 0_i64 {
+                            *alive_state = PadAliveState::Normal
+                        }
+                    }
+                    PadAliveState::Dying(countdown) => {
+                        *countdown -= delta_time_ms as i64;
+                        if *countdown <= 0_i64 {
+                            *self = PadState::Dead;
+                        }
+                    }
+                };
+            }
+            PadState::Dead => {}
+        }
+        PadUpdateResult {
+            pad_state: self.clone(),
         }
     }
 }
 
-type DotMatrixMutex<'a> = Mutex<CriticalSectionRawMutex, Option<DotMatrix<'a>>>;
-static DOT_MATRIX: DotMatrixMutex = Mutex::new(None);
+#[derive(Debug)]
+struct PadUpdateResult {
+    pad_state: PadState,
+}
+
+struct BallUpdateResult {
+    x: u8,
+    y: u8,
+}
 
 #[derive(Clone)]
 struct Ball {
@@ -115,92 +224,99 @@ impl Ball {
             x: initial_x as f32,
             y: initial_y as f32,
             x_speed: 0.0054,
-            y_speed: 0.004,
+            y_speed: -0.004,
         }
     }
 
-    fn game_over(&mut self) {
-        info!("YOU DED!");
-        //self.x_speed = 0.0;
-        //self.y_speed = 0.0;
-    }
+    fn update(&mut self, pad: &mut PadState, delta_time_ms: u64) -> BallUpdateResult {
+        let mut pad_hit = false;
+        if let PadState::Alive {
+            position,
+            state: PadAliveState::Normal,
+            ..
+        } = &pad
+        {
+            // Check X collision
+            if self.x_speed < 0.0 {
+                let min_x = if matches!(position, PadPosition::Left) {
+                    1.5
+                } else {
+                    0.5
+                };
+                if self.x < min_x {
+                    pad_hit = matches!(position, PadPosition::Left);
+                    self.x = min_x;
+                    self.x_speed *= -1.0;
+                }
+            } else {
+                let max_x = if matches!(position, PadPosition::Right) {
+                    6.5
+                } else {
+                    7.5
+                };
 
-    fn update(&mut self, pad_position: &PadPosition, delta_time_ms: u64) {
-        let min_x = if matches!(pad_position, PadPosition::Left) {
-            1.5
-        } else {
-            0.5
-        };
-        let min_y = if matches!(pad_position, PadPosition::Top) {
-            1.5
-        } else {
-            0.5
-        };
-        let max_x = if matches!(pad_position, PadPosition::Right) {
-            6.5
-        } else {
-            7.5
-        };
-        let max_y = if matches!(pad_position, PadPosition::Bottom) {
-            6.5
-        } else {
-            7.5
-        };
+                if self.x >= max_x {
+                    pad_hit = matches!(position, PadPosition::Right);
+                    self.x = max_x;
+                    self.x_speed *= -1.0;
+                }
+            }
 
-        if self.x >= max_x {
-            if !matches!(pad_position, PadPosition::Right) {
-                self.game_over();
+            // Check Y collision
+            if self.y_speed < 0.0 {
+                let min_y = if matches!(position, PadPosition::Top) {
+                    1.5
+                } else {
+                    0.5
+                };
+                if self.y < min_y {
+                    pad_hit = matches!(position, PadPosition::Top);
+                    self.y = min_y;
+                    self.y_speed *= -1.0;
+                }
+            } else {
+                let max_y = if matches!(position, PadPosition::Bottom) {
+                    6.5
+                } else {
+                    7.5
+                };
+                if self.y >= max_y {
+                    pad_hit = matches!(position, PadPosition::Bottom);
+                    self.y = max_y;
+                    self.y_speed *= -1.0;
+                }
             }
-            self.x = max_x;
-            self.x_speed *= -1.0;
-        }
-        if self.x < min_x {
-            if !matches!(pad_position, PadPosition::Left) {
-                self.game_over();
+            if pad_hit {
+                pad.take_damage();
             }
-            self.x = min_x;
-            self.x_speed *= -1.0;
+            self.x += self.x_speed * delta_time_ms as f32;
+            self.y += self.y_speed * delta_time_ms as f32;
         }
-        if self.y >= max_y {
-            if !matches!(pad_position, PadPosition::Bottom) {
-                self.game_over();
-            }
-            self.y = max_y;
-            self.y_speed *= -1.0;
+        BallUpdateResult {
+            x: self.x as u8,
+            y: self.y as u8,
         }
-        if self.y < min_y {
-            if !matches!(pad_position, PadPosition::Top) {
-                self.game_over();
-            }
-            self.y = min_y;
-            self.y_speed *= -1.0;
-        }
-        self.x += self.x_speed * delta_time_ms as f32;
-        self.y += self.y_speed * delta_time_ms as f32;
-    }
-
-    fn draw(&self, dot_matrix: &mut DotMatrix) {
-        dot_matrix.put(self.x as u8, self.y as u8);
     }
 }
 
 static GAME_STATE: Mutex<CriticalSectionRawMutex, GameState> = Mutex::new(GameState::new());
 struct GameState {
     ball: Ball,
-    pad_position: PadPosition,
+    pad: PadState,
 }
 
 impl GameState {
     const fn new() -> Self {
         Self {
             ball: Ball::new(3, 3),
-            pad_position: PadPosition::Bottom,
+            pad: PadState::new(),
         }
     }
-    fn update(&mut self, delta_time_ms: u64) -> (Ball, PadPosition) {
-        self.ball.update(&self.pad_position, delta_time_ms);
-
-        (self.ball.clone(), self.pad_position.clone())
+    fn update(&mut self, delta_time_ms: u64) -> (PadUpdateResult, BallUpdateResult) {
+        (
+            self.pad.update(delta_time_ms),
+            self.ball.update(&mut self.pad, delta_time_ms),
+        )
     }
 }
 
@@ -211,12 +327,37 @@ async fn game_loop() {
         let now = now().duration_since_epoch().to_millis();
         let delta_time_ms = now - last_tick;
         last_tick = now;
-        let (ball, mut pad_position) = GAME_STATE.lock().await.borrow_mut().update(delta_time_ms);
+        let (mut pad_update_result, ball_update_result) =
+            GAME_STATE.lock().await.borrow_mut().update(delta_time_ms);
+
         if let Some(dot_matrix) = DOT_MATRIX.lock().await.as_mut() {
             dot_matrix.clear();
+            match &mut pad_update_result.pad_state {
+                PadState::Alive {
+                    position,
+                    state: alive_state,
+                    ..
+                } => match &alive_state {
+                    PadAliveState::Normal => {
+                        position.draw(dot_matrix);
+                    }
+                    PadAliveState::Hurting(countdown) => {
+                        if countdown % 100 < 50 {
+                            dot_matrix.fill();
+                        }
+                    }
+                    PadAliveState::Dying(countdown) => {
+                        if countdown % 100 < 50 {
+                            dot_matrix.fill();
+                        }
+                    }
+                },
 
-            ball.draw(dot_matrix);
-            pad_position.draw(dot_matrix);
+                PadState::Dead => {
+                    // TODO: Show score
+                }
+            }
+            dot_matrix.put(ball_update_result.x, ball_update_result.y);
             dot_matrix.flush_buffer_to_spi();
         }
         Timer::after(Duration::from_millis(16)).await;
@@ -235,7 +376,7 @@ async fn main(spawner: Spawner) {
     let cs = Input::new(peripherals.GPIO1, Pull::Down); //CS
     let sclk = Input::new(peripherals.GPIO2, Pull::Down); //CLK
 
-    let mut spi = esp_hal::spi::master::Spi::new_with_config(
+    let spi = esp_hal::spi::master::Spi::new_with_config(
         peripherals.SPI2,
         esp_hal::spi::master::Config {
             frequency: fugit::HertzU32::MHz(2),
@@ -247,18 +388,6 @@ async fn main(spawner: Spawner) {
     .with_sck(sclk)
     .with_mosi(mosi)
     .with_cs(cs);
-
-    // Power Up Device
-    spi.write_bytes(&[0x0C, 0x01]).expect("bytes to be written");
-
-    // Set up Decode Mode
-    spi.write_bytes(&[0x09, 0x00]).expect("bytes to be written");
-
-    //Configure Scan Limit
-    spi.write_bytes(&[0x0b, 0x07]).expect("bytes to be written");
-
-    //Configure Intensity
-    spi.write_bytes(&[0x0a, 0x9a]).expect("bytes to be written");
 
     *DOT_MATRIX.lock().await = Some(DotMatrix::new(spi));
 
@@ -274,6 +403,9 @@ async fn main(spawner: Spawner) {
 
     loop {
         let _ = button.wait_for_falling_edge().await;
-        GAME_STATE.lock().await.pad_position.next();
+
+        if let PadState::Alive { position, .. } = &mut GAME_STATE.lock().await.borrow_mut().pad {
+            position.next();
+        }
     }
 }
