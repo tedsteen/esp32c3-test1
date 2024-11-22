@@ -1,9 +1,12 @@
-use crate::pad::{PadAliveState, PadPosition, PadState};
+use crate::{
+    dot_matrix::DotMatrix,
+    pad::{Pad, PadPosition, PadState},
+};
 
 #[derive(Clone)]
 pub struct Ball {
-    x: f32,
-    y: f32,
+    pub x: f32,
+    pub y: f32,
     x_speed: f32,
     y_speed: f32,
 }
@@ -17,11 +20,11 @@ impl Ball {
         }
     }
 
-    pub fn update(&mut self, pad: &mut PadState, delta_time_ms: u64) -> BallUpdateResult {
+    pub fn update(&mut self, pad: &mut Pad, delta_time_ms: u64) {
         let mut pad_hit = false;
-        if let PadState::Alive {
+        if let Pad::Alive {
             position,
-            state: PadAliveState::Normal,
+            state: PadState::Normal,
             ..
         } = &pad
         {
@@ -81,14 +84,9 @@ impl Ball {
             self.x += self.x_speed * delta_time_ms as f32;
             self.y += self.y_speed * delta_time_ms as f32;
         }
-        BallUpdateResult {
-            x: self.x as u8,
-            y: self.y as u8,
-        }
     }
-}
 
-pub struct BallUpdateResult {
-    pub x: u8,
-    pub y: u8,
+    pub fn draw(&self, dot_matrix: &mut DotMatrix) {
+        dot_matrix.put(self.x as u8, self.y as u8);
+    }
 }

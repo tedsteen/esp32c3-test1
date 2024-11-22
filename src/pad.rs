@@ -20,7 +20,7 @@ impl PadPosition {
         }
     }
 
-    pub fn draw(&self, dot_matrix: &mut DotMatrix) {
+    fn draw(&self, dot_matrix: &mut DotMatrix) {
         match self {
             PadPosition::Left => {
                 for y in 0..8 {
@@ -44,33 +44,34 @@ impl PadPosition {
 const MAX_HEALTH: u8 = 4;
 
 #[derive(Clone, Debug)]
-pub enum PadAliveState {
+pub enum PadState {
     Normal,
     Hurting(i64),
     Dying(i64),
 }
 
 #[derive(Clone, Debug)]
-pub enum PadState {
+pub enum Pad {
     Alive {
-        state: PadAliveState,
+        state: PadState,
         position: PadPosition,
         health: u8,
     },
+
     Dead,
 }
 
-impl PadState {
+impl Pad {
     pub const fn new() -> Self {
         Self::Alive {
-            state: PadAliveState::Normal,
+            state: PadState::Normal,
             position: PadPosition::Bottom,
             health: MAX_HEALTH,
         }
     }
 
     pub fn take_damage(&mut self) {
-        if let PadState::Alive {
+        if let Pad::Alive {
             health,
             state: alive_state,
             ..
@@ -80,43 +81,56 @@ impl PadState {
             info!("Health: {}", health);
             if *health == 0 {
                 info!("YOU DED!");
-                *alive_state = PadAliveState::Dying(1000)
+                *alive_state = PadState::Dying(1000)
             } else {
-                *alive_state = PadAliveState::Hurting(200);
+                *alive_state = PadState::Hurting(200);
             }
         }
     }
 
-    pub fn update(&mut self, delta_time_ms: u64) -> PadUpdateResult {
+    pub fn update(&mut self, delta_time_ms: u64) {
         match self {
-            PadState::Alive {
-                state: alive_state, ..
-            } => {
-                match alive_state {
-                    PadAliveState::Normal => {}
-                    PadAliveState::Hurting(countdown) => {
+            Pad::Alive { state, .. } => {
+                match state {
+                    PadState::Hurting(countdown) => {
                         *countdown -= delta_time_ms as i64;
                         if *countdown <= 0_i64 {
-                            *alive_state = PadAliveState::Normal
+                            *state = PadState::Normal
                         }
                     }
-                    PadAliveState::Dying(countdown) => {
+                    PadState::Dying(countdown) => {
                         *countdown -= delta_time_ms as i64;
                         if *countdown <= 0_i64 {
-                            *self = PadState::Dead;
+                            *self = Pad::Dead;
                         }
                     }
+                    PadState::Normal => {}
                 };
             }
-            PadState::Dead => {}
-        }
-        PadUpdateResult {
-            pad_state: self.clone(),
+            Pad::Dead => {}
         }
     }
-}
 
-#[derive(Debug)]
-pub struct PadUpdateResult {
-    pub pad_state: PadState,
+    pub fn draw(&self, dot_matrix: &mut DotMatrix) {
+        if let Pad::Alive {
+            state: alive_state,
+            position,
+            ..
+        } = self
+        {
+            match &alive_state {
+                PadState::Normal => position.draw(dot_matrix),
+                PadState::Hurting(countdown) => {
+                    if countdown % 100 < 50 {
+                        dot_matrix.fill();
+                    }
+                }
+                PadState::Dying(countdown) => {
+                    if countdown % 100 < 50 {
+                        dot_matrix.fill();
+                    }
+                }
+            }
+        }
+    }
 }

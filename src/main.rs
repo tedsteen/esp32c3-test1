@@ -16,7 +16,7 @@ use esp_hal::{
 };
 use esp_println::logger::init_logger_from_env;
 use log::info;
-use pad::{PadAliveState, PadState};
+use pad::Pad;
 
 mod ball;
 mod dot_matrix;
@@ -26,7 +26,7 @@ static DOT_MATRIX: Mutex<CriticalSectionRawMutex, Option<DotMatrix<'_>>> = Mutex
 static GAME_STATE: Mutex<CriticalSectionRawMutex, GameState> = Mutex::new(GameState::new());
 
 enum GameState {
-    Playing { ball: Ball, pad: PadState },
+    Playing { ball: Ball, pad: Pad },
     GameOver,
 }
 
@@ -34,41 +34,24 @@ impl GameState {
     const fn new() -> Self {
         Self::Playing {
             ball: Ball::new(3, 3),
-            pad: PadState::new(),
+            pad: Pad::new(),
         }
     }
     async fn tick(&mut self, delta_time_ms: u64) {
+        if matches!(self, GameState::Playing { pad: Pad::Dead, .. }) {
+            *self = GameState::GameOver;
+        }
+
         match self {
             GameState::Playing { ball, pad } => {
-                let pad_update_result = pad.update(delta_time_ms);
-                let ball_update_result = ball.update(pad, delta_time_ms);
+                pad.update(delta_time_ms);
+                ball.update(pad, delta_time_ms);
 
                 if let Some(dot_matrix) = DOT_MATRIX.lock().await.as_mut() {
                     dot_matrix.clear();
-                    match pad_update_result.pad_state {
-                        PadState::Alive {
-                            position,
-                            state: alive_state,
-                            ..
-                        } => match &alive_state {
-                            PadAliveState::Normal => {
-                                position.draw(dot_matrix);
-                            }
-                            PadAliveState::Hurting(countdown) => {
-                                if countdown % 100 < 50 {
-                                    dot_matrix.fill();
-                                }
-                            }
-                            PadAliveState::Dying(countdown) => {
-                                if countdown % 100 < 50 {
-                                    dot_matrix.fill();
-                                }
-                            }
-                        },
 
-                        PadState::Dead => *self = GameState::GameOver,
-                    }
-                    dot_matrix.put(ball_update_result.x, ball_update_result.y);
+                    pad.draw(dot_matrix);
+                    ball.draw(dot_matrix);
                     dot_matrix.flush_buffer_to_spi();
                 }
             }
@@ -122,7 +105,7 @@ async fn main(spawner: Spawner) {
         let _ = button.wait_for_falling_edge().await;
         match GAME_STATE.lock().await.deref_mut() {
             GameState::Playing { pad, .. } => {
-                if let PadState::Alive { position, .. } = pad {
+                if let Pad::Alive { position, .. } = pad {
                     position.next();
                 }
             }
