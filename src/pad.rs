@@ -20,7 +20,7 @@ impl PadPosition {
         }
     }
 
-    pub fn draw(&mut self, dot_matrix: &mut DotMatrix) {
+    pub fn draw(&self, dot_matrix: &mut DotMatrix) {
         match self {
             PadPosition::Left => {
                 for y in 0..8 {
