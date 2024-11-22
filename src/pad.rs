@@ -62,10 +62,10 @@ pub enum Pad {
 }
 
 impl Pad {
-    pub const fn new() -> Self {
+    pub const fn new(initial_position: PadPosition) -> Self {
         Self::Alive {
             state: PadState::Normal,
-            position: PadPosition::Bottom,
+            position: initial_position,
             health: MAX_HEALTH,
         }
     }

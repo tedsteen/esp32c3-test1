@@ -16,7 +16,7 @@ use esp_hal::{
 };
 use esp_println::logger::init_logger_from_env;
 use log::info;
-use pad::Pad;
+use pad::{Pad, PadPosition};
 
 mod ball;
 mod dot_matrix;
@@ -34,7 +34,7 @@ impl GameState {
     const fn new() -> Self {
         Self::Playing {
             ball: Ball::new(3, 3),
-            pad: Pad::new(),
+            pad: Pad::new(PadPosition::Bottom),
         }
     }
     async fn tick(&mut self, delta_time_ms: u64) {
