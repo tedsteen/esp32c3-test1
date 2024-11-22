@@ -3,89 +3,22 @@
 
 use core::borrow::BorrowMut;
 
+use dot_matrix::DotMatrix;
 use embassy_executor::Spawner;
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex};
 use embassy_time::{Duration, Timer};
 use esp_backtrace as _;
 use esp_hal::{
     gpio::{Input, Pull},
-    spi::master::Spi,
     time::now,
     timer::timg::TimerGroup,
-    Blocking,
 };
 use esp_println::logger::init_logger_from_env;
-use log::{debug, info};
+use log::info;
 
-struct DotMatrix<'a> {
-    buffer: [u8; 8],
-    intensity: u8,
-    spi: Spi<'a, Blocking>,
-}
+mod dot_matrix;
 
-impl<'a> DotMatrix<'a> {
-    fn new(mut spi: Spi<'a, Blocking>) -> Self {
-        // Power Up Device
-        spi.write_bytes(&[0x0C, 0x01]).expect("bytes to be written");
-
-        // Set up Decode Mode to work with the MAX2719
-        spi.write_bytes(&[0x09, 0x00]).expect("bytes to be written");
-
-        //Configure Scan Limit to work with the MAX2719
-        spi.write_bytes(&[0x0b, 0x07]).expect("bytes to be written");
-        let mut s = Self {
-            buffer: [0; 8],
-            intensity: 0xFF,
-            spi,
-        };
-        s.set_intensity(0x0F);
-        s
-    }
-
-    // NOTE: Max intensity is 0x0F
-    fn set_intensity(&mut self, intensity: u8) {
-        if self.intensity != intensity {
-            self.intensity = intensity;
-            debug!("Write intensity: 0x{:01x}", intensity);
-            self.spi
-                .write_bytes(&[0x0a, intensity])
-                .expect("bytes to be written");
-        }
-    }
-
-    fn fill(&mut self) {
-        debug!("Fill");
-        for addr in 1..=8 {
-            self.buffer[addr - 1] = 0xff;
-        }
-    }
-
-    fn clear(&mut self) {
-        debug!("Clear");
-        for addr in 1..=8 {
-            self.buffer[addr - 1] = 0;
-        }
-    }
-
-    fn put(&mut self, x: u8, y: u8) {
-        self.buffer[y as usize] |= (0b10000000 >> x) as u8;
-    }
-
-    fn set_row(&mut self, row: u8, row_data: u8) {
-        self.buffer[row as usize] = row_data;
-    }
-
-    fn flush_buffer_to_spi(&mut self) {
-        for i in 0..8 {
-            self.spi
-                .write_bytes(&[i + 1, self.buffer[i as usize]])
-                .expect("buffer to be written to spi");
-        }
-    }
-}
-
-type DotMatrixMutex<'a> = Mutex<CriticalSectionRawMutex, Option<DotMatrix<'a>>>;
-static DOT_MATRIX: DotMatrixMutex = Mutex::new(None);
+static DOT_MATRIX: Mutex<CriticalSectionRawMutex, Option<DotMatrix<'_>>> = Mutex::new(None);
 
 #[derive(Debug, Clone)]
 enum PadPosition {
@@ -369,27 +302,11 @@ async fn main(spawner: Spawner) {
     init_logger_from_env();
     let peripherals = esp_hal::init(esp_hal::Config::default());
 
-    // See this: https://dev.to/theembeddedrustacean/esp32-standard-library-embedded-rust-spi-with-the-max7219-led-dot-matrix-1ge0
-    // and this: https://dev.to/theembeddedrustacean/esp32-embedded-rust-at-the-hal-spi-communication-30a4
-    use esp_hal::spi::SpiMode;
     let mosi = Input::new(peripherals.GPIO0, Pull::Down); //DIN
     let cs = Input::new(peripherals.GPIO1, Pull::Down); //CS
     let sclk = Input::new(peripherals.GPIO2, Pull::Down); //CLK
 
-    let spi = esp_hal::spi::master::Spi::new_with_config(
-        peripherals.SPI2,
-        esp_hal::spi::master::Config {
-            frequency: fugit::HertzU32::MHz(2),
-            mode: SpiMode::Mode0,
-            read_bit_order: esp_hal::spi::SpiBitOrder::MSBFirst,
-            write_bit_order: esp_hal::spi::SpiBitOrder::MSBFirst,
-        },
-    )
-    .with_sck(sclk)
-    .with_mosi(mosi)
-    .with_cs(cs);
-
-    *DOT_MATRIX.lock().await = Some(DotMatrix::new(spi));
+    *DOT_MATRIX.lock().await = Some(DotMatrix::new(mosi, cs, sclk, peripherals.SPI2));
 
     //let mut rng = Rng::new(peripherals.RNG);
 
