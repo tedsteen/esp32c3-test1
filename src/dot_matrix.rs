@@ -35,6 +35,11 @@ impl<'a> DotMatrix<'a> {
         .with_mosi(mosi)
         .with_cs(cs);
 
+        // Zero out all registers
+        for cmd in 0..16 {
+            spi.write_bytes(&[cmd, 0x00]).expect("bytes to be written");
+        }
+
         // Power Up Device
         spi.write_bytes(&[0x0C, 0x01]).expect("bytes to be written");
 
