@@ -7,11 +7,10 @@ use ball::Ball;
 use dot_matrix::DotMatrix;
 use embassy_executor::Spawner;
 use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex};
-use embassy_time::{Duration, Timer};
+use embassy_time::{Duration, Instant, Timer};
 use esp_backtrace as _;
 use esp_hal::{
     gpio::{Input, Pull},
-    time::now,
     timer::timg::TimerGroup,
 };
 use esp_println::logger::init_logger_from_env;
@@ -26,24 +25,40 @@ static DOT_MATRIX: Mutex<CriticalSectionRawMutex, Option<DotMatrix<'_>>> = Mutex
 static GAME_STATE: Mutex<CriticalSectionRawMutex, GameState> = Mutex::new(GameState::new());
 
 enum GameState {
-    Playing { ball: Ball, pad: Pad },
-    GameOver,
+    MainMenu,
+    Playing {
+        ball: Ball,
+        pad: Pad,
+        start_time: Instant,
+    },
+    GameOver(Duration),
 }
 
 impl GameState {
     const fn new() -> Self {
-        Self::Playing {
+        Self::MainMenu
+    }
+
+    fn start_new_game(&mut self) {
+        *self = Self::Playing {
             ball: Ball::new(3, 3),
             pad: Pad::new(PadPosition::Bottom),
+            start_time: Instant::now(),
         }
     }
+
     async fn tick(&mut self, delta_time_ms: u64) {
-        if matches!(self, GameState::Playing { pad: Pad::Dead, .. }) {
-            *self = GameState::GameOver;
+        if let GameState::Playing {
+            pad: Pad::Dead,
+            start_time,
+            ..
+        } = self
+        {
+            *self = GameState::GameOver(Instant::now().duration_since(*start_time));
         }
 
         match self {
-            GameState::Playing { ball, pad } => {
+            GameState::Playing { ball, pad, .. } => {
                 pad.update(delta_time_ms);
                 ball.update(pad, delta_time_ms);
 
@@ -55,8 +70,14 @@ impl GameState {
                     dot_matrix.flush_buffer_to_spi();
                 }
             }
-            GameState::GameOver => {
+            GameState::GameOver(play_time) => {
                 // TODO: Show score
+                info!("Score: {}", play_time.as_secs());
+                *self = GameState::MainMenu;
+            }
+            GameState::MainMenu => {
+                // TODO: Show menu
+                self.start_new_game();
             }
         }
     }
@@ -65,10 +86,10 @@ impl GameState {
 #[embassy_executor::task]
 async fn game_loop() {
     info!("Starting game loop!");
-    let mut last_tick = now().duration_since_epoch().to_millis();
+    let mut last_tick = Instant::now();
     loop {
-        let now = now().duration_since_epoch().to_millis();
-        let delta_time_ms = now - last_tick;
+        let now = Instant::now();
+        let delta_time_ms = now.duration_since(last_tick).as_millis();
         last_tick = now;
         GAME_STATE
             .lock()
@@ -103,14 +124,18 @@ async fn main(spawner: Spawner) {
     info!("Starting main loop!");
     loop {
         let _ = button.wait_for_falling_edge().await;
+
         match GAME_STATE.lock().await.deref_mut() {
             GameState::Playing { pad, .. } => {
                 if let Pad::Alive { position, .. } = pad {
                     position.next();
                 }
             }
-            GameState::GameOver => {
+            GameState::GameOver(_) => {
                 // Restart game?
+            }
+            GameState::MainMenu => {
+                // Menu stuffs
             }
         }
     }

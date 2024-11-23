@@ -28,6 +28,9 @@ impl Ball {
             ..
         } = &pad
         {
+            self.x_speed *= 1.0 + (0.00001 * delta_time_ms as f32);
+            self.y_speed *= 1.0 + (0.00001 * delta_time_ms as f32);
+
             // Check X collision
             if self.x_speed < 0.0 {
                 let min_x = if matches!(position, PadPosition::Left) {
