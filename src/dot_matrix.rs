@@ -98,4 +98,8 @@ impl<'a> DotMatrix<'a> {
                 .expect("buffer to be written to spi");
         }
     }
+
+    pub fn draw(&mut self, bitmap: [u8; 8]) {
+        self.buffer.copy_from_slice(&bitmap[0..8]);
+    }
 }

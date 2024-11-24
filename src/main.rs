@@ -1,7 +1,7 @@
 #![no_std]
 #![no_main]
 
-use core::{borrow::BorrowMut, ops::DerefMut};
+use core::{borrow::BorrowMut, fmt::Write, ops::DerefMut};
 
 use ball::Ball;
 use dot_matrix::DotMatrix;
@@ -14,29 +14,33 @@ use esp_hal::{
     timer::timg::TimerGroup,
 };
 use esp_println::logger::init_logger_from_env;
-use log::info;
+use font8x8::UnicodeFonts;
+use heapless::String;
+use log::{error, info};
 use pad::{Pad, PadPosition};
+use text_ticker::TextTicker;
 
 mod ball;
 mod dot_matrix;
 mod pad;
+mod text_ticker;
 
 static DOT_MATRIX: Mutex<CriticalSectionRawMutex, Option<DotMatrix<'_>>> = Mutex::new(None);
 static GAME_STATE: Mutex<CriticalSectionRawMutex, GameState> = Mutex::new(GameState::new());
 
 enum GameState {
-    MainMenu,
+    Intro(i64),
     Playing {
         ball: Ball,
         pad: Pad,
         start_time: Instant,
     },
-    GameOver(Duration),
+    GameOver(TextTicker<100>),
 }
 
 impl GameState {
     const fn new() -> Self {
-        Self::MainMenu
+        Self::Intro(3000)
     }
 
     fn start_new_game(&mut self) {
@@ -54,7 +58,14 @@ impl GameState {
             ..
         } = self
         {
-            *self = GameState::GameOver(Instant::now().duration_since(*start_time));
+            let play_time = Instant::now().duration_since(*start_time);
+            info!("Score: {}", play_time.as_secs());
+            let mut ticker_text = String::<100>::new();
+            if write!(ticker_text, "Points - {} - ", play_time.as_secs()).is_err() {
+                error!("Failed to write string");
+            };
+
+            *self = GameState::GameOver(TextTicker::new(ticker_text, 0.014));
         }
 
         match self {
@@ -70,14 +81,33 @@ impl GameState {
                     dot_matrix.flush_buffer_to_spi();
                 }
             }
-            GameState::GameOver(play_time) => {
-                // TODO: Show score
-                info!("Score: {}", play_time.as_secs());
-                *self = GameState::MainMenu;
+            GameState::GameOver(text_ticker) => {
+                text_ticker.update(delta_time_ms);
+                if let Some(dot_matrix) = DOT_MATRIX.lock().await.as_mut() {
+                    text_ticker.draw(dot_matrix);
+                    dot_matrix.flush_buffer_to_spi();
+                }
             }
-            GameState::MainMenu => {
-                // TODO: Show menu
-                self.start_new_game();
+            GameState::Intro(countdown) => {
+                *countdown -= delta_time_ms as i64;
+                if let Some(dot_matrix) = DOT_MATRIX.lock().await.as_mut() {
+                    let countdown_as_secs = 1 + (*countdown / 1000);
+                    let mut countdown_as_bitmap = font8x8::BASIC_FONTS
+                        .get_font((b'0' + countdown_as_secs as u8) as char)
+                        .unwrap()
+                        .1;
+
+                    for row in &mut countdown_as_bitmap {
+                        *row = row.reverse_bits() >> 1;
+                    }
+
+                    dot_matrix.draw(countdown_as_bitmap);
+                    dot_matrix.flush_buffer_to_spi();
+                }
+
+                if *countdown <= 0 {
+                    self.start_new_game();
+                }
             }
         }
     }
@@ -124,19 +154,18 @@ async fn main(spawner: Spawner) {
     info!("Starting main loop!");
     loop {
         let _ = button.wait_for_falling_edge().await;
-
-        match GAME_STATE.lock().await.deref_mut() {
+        let mut game_state = GAME_STATE.lock().await;
+        let game_state = game_state.deref_mut();
+        match game_state {
             GameState::Playing { pad, .. } => {
                 if let Pad::Alive { position, .. } = pad {
                     position.next();
                 }
             }
             GameState::GameOver(_) => {
-                // Restart game?
+                *game_state = GameState::new();
             }
-            GameState::MainMenu => {
-                // Menu stuffs
-            }
+            GameState::Intro(_) => {}
         }
     }
 }
