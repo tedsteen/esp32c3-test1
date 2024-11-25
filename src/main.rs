@@ -29,7 +29,6 @@ mod highscore;
 mod pad;
 mod text_ticker;
 
-static DOT_MATRIX: Mutex<CriticalSectionRawMutex, Option<DotMatrix<'_>>> = Mutex::new(None);
 static GAME_STATE: Mutex<CriticalSectionRawMutex, GameState> = Mutex::new(GameState::New());
 
 enum GameState {
@@ -49,7 +48,12 @@ impl GameState {
         }
     }
 
-    async fn tick(&mut self, delta_time_ms: u64, highscore: &mut HighScore) {
+    async fn tick(
+        &mut self,
+        delta_time_ms: u64,
+        highscore: &mut HighScore,
+        dot_matrix: &mut DotMatrix<'_>,
+    ) {
         if let GameState::Playing {
             pad: Pad::Dead,
             score,
@@ -82,24 +86,20 @@ impl GameState {
             }
             GameState::Intro(highscore) => {
                 highscore.update(delta_time_ms);
-                if let Some(dot_matrix) = DOT_MATRIX.lock().await.as_mut() {
-                    highscore.draw(dot_matrix);
-                    dot_matrix.flush_buffer_to_spi();
-                }
+                highscore.draw(dot_matrix);
+                dot_matrix.flush_buffer_to_spi();
             }
             GameState::Countdown(countdown) => {
                 *countdown -= delta_time_ms as i64;
-                if let Some(dot_matrix) = DOT_MATRIX.lock().await.as_mut() {
-                    let countdown_as_secs = 1 + (*countdown / 1000);
-                    let countdown_as_bitmap =
-                        *font::get_font_data(&((b'0' + countdown_as_secs as u8) as char))
-                            .expect("a font for a number");
+                let countdown_as_secs = 1 + (*countdown / 1000);
+                let countdown_as_bitmap =
+                    *font::get_font_data(&((b'0' + countdown_as_secs as u8) as char))
+                        .expect("a font for a number");
 
-                    dot_matrix.draw(&countdown_as_bitmap);
-                    dot_matrix.shift(2, 1);
-                    dot_matrix.flush_buffer_to_spi();
-                    dot_matrix.clear();
-                }
+                dot_matrix.draw(&countdown_as_bitmap);
+                dot_matrix.shift(2, 1);
+                dot_matrix.flush_buffer_to_spi();
+                dot_matrix.clear();
 
                 if *countdown <= 0 {
                     self.start_new_game();
@@ -109,27 +109,23 @@ impl GameState {
                 pad.update(delta_time_ms);
                 ball.update(pad, delta_time_ms, score);
 
-                if let Some(dot_matrix) = DOT_MATRIX.lock().await.as_mut() {
-                    dot_matrix.clear();
+                dot_matrix.clear();
 
-                    pad.draw(dot_matrix);
-                    ball.draw(dot_matrix);
-                    dot_matrix.flush_buffer_to_spi();
-                }
+                pad.draw(dot_matrix);
+                ball.draw(dot_matrix);
+                dot_matrix.flush_buffer_to_spi();
             }
             GameState::GameOver(text_ticker) => {
                 text_ticker.update(delta_time_ms);
-                if let Some(dot_matrix) = DOT_MATRIX.lock().await.as_mut() {
-                    text_ticker.draw(dot_matrix);
-                    dot_matrix.flush_buffer_to_spi();
-                }
+                text_ticker.draw(dot_matrix);
+                dot_matrix.flush_buffer_to_spi();
             }
         }
     }
 }
 
 #[embassy_executor::task]
-async fn game_loop() {
+async fn game_loop(mut dot_matrix: DotMatrix<'static>) {
     info!("Starting game loop!");
     let mut last_tick = Instant::now();
     let mut highscore = HighScore::new();
@@ -141,7 +137,7 @@ async fn game_loop() {
             .lock()
             .await
             .borrow_mut()
-            .tick(delta_time_ms, &mut highscore)
+            .tick(delta_time_ms, &mut highscore, &mut dot_matrix)
             .await;
 
         Timer::after(Duration::from_millis(16)).await;
@@ -159,13 +155,13 @@ async fn main(spawner: Spawner) {
     let cs = Input::new(peripherals.GPIO1, Pull::Down); //CS
     let sclk = Input::new(peripherals.GPIO2, Pull::Down); //CLK
 
-    *DOT_MATRIX.lock().await = Some(DotMatrix::new(mosi, cs, sclk, peripherals.SPI2));
+    let dot_matrix = DotMatrix::new(mosi, cs, sclk, peripherals.SPI2);
 
     //let mut rng = Rng::new(peripherals.RNG);
 
     let mut button = Input::new(peripherals.GPIO9, Pull::Down);
 
-    spawner.spawn(game_loop()).ok();
+    spawner.spawn(game_loop(dot_matrix)).ok();
 
     info!("Starting main loop!");
     loop {
