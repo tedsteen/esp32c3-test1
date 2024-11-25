@@ -20,8 +20,9 @@ impl Ball {
         }
     }
 
-    pub fn update(&mut self, pad: &mut Pad, delta_time_ms: u64) {
+    pub fn update(&mut self, pad: &mut Pad, delta_time_ms: u64, score: &mut u32) {
         let mut pad_hit = false;
+        let mut hit = false;
         if let Pad::Alive {
             position,
             state: PadState::Normal,
@@ -39,6 +40,7 @@ impl Ball {
                     0.5
                 };
                 if self.x < min_x {
+                    hit = true;
                     pad_hit = matches!(position, PadPosition::Left);
                     self.x = min_x;
                     self.x_speed *= -1.0;
@@ -51,6 +53,7 @@ impl Ball {
                 };
 
                 if self.x >= max_x {
+                    hit = true;
                     pad_hit = matches!(position, PadPosition::Right);
                     self.x = max_x;
                     self.x_speed *= -1.0;
@@ -65,6 +68,7 @@ impl Ball {
                     0.5
                 };
                 if self.y < min_y {
+                    hit = true;
                     pad_hit = matches!(position, PadPosition::Top);
                     self.y = min_y;
                     self.y_speed *= -1.0;
@@ -76,14 +80,20 @@ impl Ball {
                     7.5
                 };
                 if self.y >= max_y {
+                    hit = true;
                     pad_hit = matches!(position, PadPosition::Bottom);
                     self.y = max_y;
                     self.y_speed *= -1.0;
                 }
             }
-            if pad_hit {
-                pad.take_damage();
+            if hit {
+                if pad_hit {
+                    pad.take_damage();
+                } else {
+                    *score += 1;
+                }
             }
+
             self.x += self.x_speed * delta_time_ms as f32;
             self.y += self.y_speed * delta_time_ms as f32;
         }

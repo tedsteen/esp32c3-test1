@@ -13,7 +13,7 @@ pub struct TextTicker<const N: usize> {
 }
 
 impl<const N: usize> TextTicker<N> {
-    pub fn new(text: String<N>, scroll_speed: f32) -> Self {
+    pub const fn new(text: String<N>, scroll_speed: f32) -> Self {
         Self {
             text,
             scroll_position: 0.0,
@@ -32,6 +32,10 @@ impl<const N: usize> TextTicker<N> {
     }
 
     pub fn draw(&self, dot_matrix: &mut DotMatrix) {
+        if self.text.len() == 0 {
+            return;
+        }
+
         let width = FONT_WIDTH + 1;
 
         let text_idx = self.scroll_position as usize / width as usize;

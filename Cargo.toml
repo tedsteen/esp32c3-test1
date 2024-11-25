@@ -41,6 +41,11 @@ esp-backtrace = { version = "0.14", features = [
     "println",
 ] }
 esp-println = { version = "0.12", features = ["esp32c3", "log"] }
+esp-storage = { version = "0.4", features = ["esp32c3"] }
+
+# storage api
+embedded-storage = "0.3"
+
 
 # Other stuff
 fugit = "0.3"

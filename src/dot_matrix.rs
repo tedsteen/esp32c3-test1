@@ -7,7 +7,7 @@ use esp_hal::{
     },
     Blocking,
 };
-use log::debug;
+use log::{debug, trace};
 
 pub struct DotMatrix<'a> {
     buffer: [u8; 8],
@@ -70,14 +70,14 @@ impl<'a> DotMatrix<'a> {
     }
 
     pub fn fill(&mut self) {
-        debug!("Fill");
+        trace!("Fill");
         for addr in 1..=8 {
             self.buffer[addr - 1] = 0xff;
         }
     }
 
     pub fn clear(&mut self) {
-        debug!("Clear");
+        trace!("Clear");
         for addr in 1..=8 {
             self.buffer[addr - 1] = 0;
         }
