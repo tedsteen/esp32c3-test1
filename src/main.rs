@@ -160,7 +160,7 @@ async fn main(spawner: Spawner) {
 
     //let mut rng = Rng::new(peripherals.RNG);
 
-    let mut button = Input::new(peripherals.GPIO9, Pull::Down);
+    let mut button = Input::new(peripherals.GPIO9, Pull::Up);
 
     spawner.spawn(game_loop(dot_matrix)).ok();
 
