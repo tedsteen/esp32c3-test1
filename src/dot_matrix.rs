@@ -99,7 +99,14 @@ impl<'a> DotMatrix<'a> {
         }
     }
 
-    pub fn draw(&mut self, bitmap: [u8; 8]) {
-        self.buffer.copy_from_slice(&bitmap[0..8]);
+    pub fn draw<const ROWS: usize>(&mut self, bitmap: &[u8; ROWS]) {
+        self.buffer[0..ROWS].copy_from_slice(&bitmap[0..ROWS]);
+    }
+
+    pub(crate) fn shift(&mut self, x: u8, y: u8) {
+        for r in 0..8 {
+            self.buffer[r] >>= x;
+        }
+        self.buffer.rotate_right(y as usize);
     }
 }

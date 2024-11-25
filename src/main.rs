@@ -14,7 +14,6 @@ use esp_hal::{
     timer::timg::TimerGroup,
 };
 use esp_println::logger::init_logger_from_env;
-use font8x8::UnicodeFonts;
 use heapless::String;
 use log::{error, info};
 use pad::{Pad, PadPosition};
@@ -22,6 +21,7 @@ use text_ticker::TextTicker;
 
 mod ball;
 mod dot_matrix;
+mod font;
 mod pad;
 mod text_ticker;
 
@@ -61,11 +61,11 @@ impl GameState {
             let play_time = Instant::now().duration_since(*start_time);
             info!("Score: {}", play_time.as_secs());
             let mut ticker_text = String::<100>::new();
-            if write!(ticker_text, "Points - {} - ", play_time.as_secs()).is_err() {
-                error!("Failed to write string");
+            if write!(ticker_text, " {} points", play_time.as_secs()).is_err() {
+                error!("Failed to write to points string");
             };
 
-            *self = GameState::GameOver(TextTicker::new(ticker_text, 0.014));
+            *self = GameState::GameOver(TextTicker::new(ticker_text, 0.01));
         }
 
         match self {
@@ -92,17 +92,14 @@ impl GameState {
                 *countdown -= delta_time_ms as i64;
                 if let Some(dot_matrix) = DOT_MATRIX.lock().await.as_mut() {
                     let countdown_as_secs = 1 + (*countdown / 1000);
-                    let mut countdown_as_bitmap = font8x8::BASIC_FONTS
-                        .get_font((b'0' + countdown_as_secs as u8) as char)
-                        .unwrap()
-                        .1;
+                    let countdown_as_bitmap =
+                        *font::get_font_data(&((b'0' + countdown_as_secs as u8) as char))
+                            .expect("a font for a number");
 
-                    for row in &mut countdown_as_bitmap {
-                        *row = row.reverse_bits() >> 1;
-                    }
-
-                    dot_matrix.draw(countdown_as_bitmap);
+                    dot_matrix.draw(&countdown_as_bitmap);
+                    dot_matrix.shift(2, 1);
                     dot_matrix.flush_buffer_to_spi();
+                    dot_matrix.clear();
                 }
 
                 if *countdown <= 0 {

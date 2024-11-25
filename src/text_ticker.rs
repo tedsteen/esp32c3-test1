@@ -1,8 +1,10 @@
-use font8x8::UnicodeFonts;
 use heapless::String;
-use log::debug;
+use libm::ceilf;
 
-use crate::dot_matrix::DotMatrix;
+use crate::{
+    dot_matrix::DotMatrix,
+    font::{get_font_data, FONT_HEIGHT, FONT_WIDTH},
+};
 
 pub struct TextTicker<const N: usize> {
     text: String<N>,
@@ -23,29 +25,34 @@ impl<const N: usize> TextTicker<N> {
         self.scroll_position += delta_time_ms as f32 * self.scroll_speed;
     }
 
-    fn get_font_data(str: &str, idx: usize) -> [u8; 8] {
+    fn get_font_data(str: &str, idx: usize) -> [u8; FONT_HEIGHT] {
         let char = str.chars().nth(idx % str.len()).unwrap();
-        let font = font8x8::BASIC_FONTS.get_font(char).unwrap();
-        font.1
+        let font = get_font_data(&char); //font8x8::BASIC_FONTS.get_font(char).unwrap();
+        font.copied().unwrap_or_default()
     }
 
     pub fn draw(&self, dot_matrix: &mut DotMatrix) {
-        let i = self.scroll_position as usize;
+        let width = FONT_WIDTH + 1;
 
-        let text_idx = i / 8;
-        let char_offs = i % 8;
-        let font_data = Self::get_font_data(self.text.as_str(), text_idx);
-        let next_font_data = Self::get_font_data(self.text.as_str(), text_idx + 1);
+        let text_idx = self.scroll_position as usize / width as usize;
+        let x_offs = self.scroll_position as u32 % width as u32;
+        let y_offs = (8 - FONT_HEIGHT) / 2;
+        let max_chars = ceilf((8 + width) as f32 / width as f32) as u8;
 
-        for r in 0..8 {
-            let mut row_data = font_data[r as usize].reverse_bits() << char_offs;
-            if char_offs != 0 {
-                let next_row_data = next_font_data[r as usize].reverse_bits() >> (8 - char_offs);
-                debug!("next_row_data {next_row_data:#010b}");
-                row_data |= next_row_data;
+        //println!("max_chars: {max_chars}");
+        let mut screen = [0_u8; 8];
+        for char in 0..max_chars {
+            let font_data = Self::get_font_data(self.text.as_str(), text_idx + char as usize);
+            let shift = width as i8 * char as i8 - x_offs as i8;
+            //println!("shift: {shift}");
+            for y in 0..FONT_HEIGHT {
+                if shift < 0 {
+                    screen[y + y_offs] |= font_data[y] << shift.abs_diff(0)
+                } else if (0..8).contains(&shift) {
+                    screen[y + y_offs] |= font_data[y] >> shift
+                }
             }
-
-            dot_matrix.set_row(r, row_data);
         }
+        dot_matrix.draw(&screen);
     }
 }
