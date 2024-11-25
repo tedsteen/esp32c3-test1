@@ -166,20 +166,26 @@ async fn main(spawner: Spawner) {
 
     info!("Starting main loop!");
     loop {
-        let _ = button.wait_for_falling_edge().await;
-        let mut game_state = GAME_STATE.lock().await;
-        let game_state = game_state.deref_mut();
-        match game_state {
-            GameState::New() => {}
-            GameState::Intro(_) | GameState::GameOver(_) => {
-                *game_state = GameState::Countdown(3000);
-            }
-            GameState::Countdown(_) => {}
-            GameState::Playing { pad, .. } => {
-                if let Pad::Alive { position, .. } = pad {
-                    position.next();
+        button.wait_for_low().await;
+        {
+            let mut game_state = GAME_STATE.lock().await;
+            let game_state = game_state.deref_mut();
+            match game_state {
+                GameState::New() => {}
+                GameState::Intro(_) | GameState::GameOver(_) => {
+                    *game_state = GameState::Countdown(3000);
+                }
+                GameState::Countdown(_) => {}
+                GameState::Playing { pad, .. } => {
+                    if let Pad::Alive { position, .. } = pad {
+                        position.next();
+                    }
                 }
             }
         }
+
+        Timer::after_millis(50).await;
+        button.wait_for_high().await;
+        Timer::after_millis(50).await;
     }
 }
