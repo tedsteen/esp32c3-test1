@@ -62,14 +62,14 @@ impl GameState {
         {
             let message = if *score > highscore.get() {
                 highscore.set(*score);
-                " new highscore!"
+                "New highscore!"
             } else {
-                ""
+                "Score"
             };
 
-            info!("Score: {score}{message}");
+            info!("Score: {message} {score}");
             let mut game_over_ticker_text = String::<100>::new();
-            if write!(game_over_ticker_text, "{score} points{message} ").is_err() {
+            if write!(game_over_ticker_text, "{message} {score} ").is_err() {
                 error!("Failed to write game over ticker string");
             };
 
@@ -79,7 +79,7 @@ impl GameState {
         match self {
             GameState::New() => {
                 let mut highscore_ticker_text = String::<100>::new();
-                if write!(highscore_ticker_text, "HIGHSCORE:{} ", highscore.get()).is_err() {
+                if write!(highscore_ticker_text, "Highscore:{} ", highscore.get()).is_err() {
                     error!("Failed to write to highscore ticker string");
                 }
                 *self = GameState::Intro(TextTicker::new(highscore_ticker_text, 0.014));
@@ -129,6 +129,7 @@ async fn game_loop(mut dot_matrix: DotMatrix<'static>) {
     info!("Starting game loop!");
     let mut last_tick = Instant::now();
     let mut highscore = HighScore::new();
+
     loop {
         let now = Instant::now();
         let delta_time_ms = now.duration_since(last_tick).as_millis();
