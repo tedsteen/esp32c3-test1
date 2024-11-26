@@ -51,4 +51,7 @@ embedded-storage = "0.3"
 fugit = "0.3"
 log = "0.4"
 heapless = "0.8"
+# NOTE: only used for ceilf in the ticker
 libm = "0.2"
+# NOTE: only used for sin in the audio
+num-traits = { version = "0.2", default-features = false, features = ["libm"] }

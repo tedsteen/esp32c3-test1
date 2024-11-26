@@ -3,7 +3,6 @@
 
 use core::{borrow::BorrowMut, fmt::Write, ops::DerefMut};
 
-use audio::Audio;
 use ball::Ball;
 use dot_matrix::DotMatrix;
 use embassy_executor::Spawner;
@@ -159,7 +158,7 @@ async fn main(spawner: Spawner) {
 
     let dot_matrix = DotMatrix::new(mosi, cs, sclk, peripherals.SPI2);
 
-    // let audio = Audio::new(
+    // let _audio = audio::Audio::new(
     //     peripherals.DMA,
     //     peripherals.I2S0,
     //     peripherals.GPIO3,
