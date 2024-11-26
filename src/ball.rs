@@ -34,19 +34,19 @@ impl Ball {
 
             // Check X collision
             if self.x_speed < 0.0 {
-                let min_x = if matches!(position, PadPosition::Left) {
+                let min_x = if matches!(position, PadPosition::Left(_)) {
                     1.5
                 } else {
                     0.5
                 };
                 if self.x < min_x {
                     hit = true;
-                    pad_hit = matches!(position, PadPosition::Left);
+                    pad_hit = matches!(position, PadPosition::Left(_));
                     self.x = min_x;
                     self.x_speed *= -1.0;
                 }
             } else {
-                let max_x = if matches!(position, PadPosition::Right) {
+                let max_x = if matches!(position, PadPosition::Right(_)) {
                     6.5
                 } else {
                     7.5
@@ -54,7 +54,7 @@ impl Ball {
 
                 if self.x >= max_x {
                     hit = true;
-                    pad_hit = matches!(position, PadPosition::Right);
+                    pad_hit = matches!(position, PadPosition::Right(_));
                     self.x = max_x;
                     self.x_speed *= -1.0;
                 }
@@ -62,26 +62,26 @@ impl Ball {
 
             // Check Y collision
             if self.y_speed < 0.0 {
-                let min_y = if matches!(position, PadPosition::Top) {
+                let min_y = if matches!(position, PadPosition::Top(_)) {
                     1.5
                 } else {
                     0.5
                 };
                 if self.y < min_y {
                     hit = true;
-                    pad_hit = matches!(position, PadPosition::Top);
+                    pad_hit = matches!(position, PadPosition::Top(_));
                     self.y = min_y;
                     self.y_speed *= -1.0;
                 }
             } else {
-                let max_y = if matches!(position, PadPosition::Bottom) {
+                let max_y = if matches!(position, PadPosition::Bottom(_)) {
                     6.5
                 } else {
                     7.5
                 };
                 if self.y >= max_y {
                     hit = true;
-                    pad_hit = matches!(position, PadPosition::Bottom);
+                    pad_hit = matches!(position, PadPosition::Bottom(_));
                     self.y = max_y;
                     self.y_speed *= -1.0;
                 }

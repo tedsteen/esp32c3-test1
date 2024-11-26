@@ -43,7 +43,7 @@ impl GameState {
     fn start_new_game(&mut self) {
         *self = Self::Playing {
             ball: Ball::new(3, 3),
-            pad: Pad::new(PadPosition::Bottom),
+            pad: Pad::new(PadPosition::Bottom(1.0)),
             score: 0,
         }
     }

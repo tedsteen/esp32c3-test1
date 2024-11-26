@@ -4,39 +4,67 @@ use crate::dot_matrix::DotMatrix;
 
 #[derive(Debug, Clone)]
 pub enum PadPosition {
-    Left,
-    Right,
-    Top,
-    Bottom,
+    Left(f32),
+    Right(f32),
+    Top(f32),
+    Bottom(f32),
 }
 
 impl PadPosition {
     pub fn next(&mut self) {
         *self = match self {
-            PadPosition::Left => PadPosition::Top,
-            PadPosition::Right => PadPosition::Bottom,
-            PadPosition::Top => PadPosition::Right,
-            PadPosition::Bottom => PadPosition::Left,
+            PadPosition::Left(_) => PadPosition::Top(0.0),
+            PadPosition::Right(_) => PadPosition::Bottom(0.0),
+            PadPosition::Top(_) => PadPosition::Right(0.0),
+            PadPosition::Bottom(_) => PadPosition::Left(0.0),
         }
+    }
+
+    fn to_pixels(slide_amount: f32) -> u8 {
+        (7.0 * (slide_amount * slide_amount * slide_amount)) as u8
     }
 
     fn draw(&self, dot_matrix: &mut DotMatrix) {
         match self {
-            PadPosition::Left => {
-                for y in 0..8 {
+            PadPosition::Top(slide_amount) => {
+                let pixels = Self::to_pixels(*slide_amount);
+                dot_matrix.set_row(0, 0b11111111 << (7 - pixels));
+                for y in (0..=7 - pixels).rev() {
                     dot_matrix.put(0, y);
                 }
             }
-            PadPosition::Right => {
-                for y in 0..8 {
+            PadPosition::Right(slide_amount) => {
+                let pixels = Self::to_pixels(*slide_amount);
+                dot_matrix.set_row(0, 0b11111111 >> pixels);
+                for y in 0..=pixels {
                     dot_matrix.put(7, y);
                 }
             }
-            PadPosition::Top => {
-                dot_matrix.set_row(0, 0b11111111);
+
+            PadPosition::Bottom(slide_amount) => {
+                let pixels = Self::to_pixels(*slide_amount);
+                dot_matrix.set_row(7, 0b11111111 >> (8 - pixels - 1));
+                for y in pixels..=7 {
+                    dot_matrix.put(7, y);
+                }
             }
-            PadPosition::Bottom => {
-                dot_matrix.set_row(7, 0b11111111);
+            PadPosition::Left(slide_amount) => {
+                let pixels = Self::to_pixels(*slide_amount);
+                for y in (7 - pixels..=7).rev() {
+                    dot_matrix.put(0, y);
+                }
+                dot_matrix.set_row(7, 0b11111111 << pixels);
+            }
+        }
+    }
+
+    fn update(&mut self, delta_time_ms: u64) {
+        match self {
+            PadPosition::Left(slide_amount)
+            | PadPosition::Right(slide_amount)
+            | PadPosition::Top(slide_amount)
+            | PadPosition::Bottom(slide_amount) => {
+                *slide_amount = f32::min(*slide_amount + delta_time_ms as f32 * 0.009, 1.0);
             }
         }
     }
@@ -90,7 +118,9 @@ impl Pad {
 
     pub fn update(&mut self, delta_time_ms: u64) {
         match self {
-            Pad::Alive { state, .. } => {
+            Pad::Alive {
+                state, position, ..
+            } => {
                 match state {
                     PadState::Hurting(countdown) => {
                         *countdown -= delta_time_ms as i64;
@@ -104,7 +134,9 @@ impl Pad {
                             *self = Pad::Dead;
                         }
                     }
-                    PadState::Normal => {}
+                    PadState::Normal => {
+                        position.update(delta_time_ms);
+                    }
                 };
             }
             Pad::Dead => {}
