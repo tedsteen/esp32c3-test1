@@ -71,13 +71,13 @@ impl<'d> Audio {
             (smpl_f32 * i16::MAX as f32) as i16
         };
 
-        let mut filler = [0i16; NUM_SAMPLES / NUM_CHANNELS];
+        let mut filler = [0i16; NUM_SAMPLES];
 
         log::info!(
             "DMA buffer: {} bytes, filler: {} channel samples ({} bytes)",
             tx_buffer.len(),
-            filler.len() / NUM_CHANNELS,
-            filler.len() * core::mem::size_of::<i16>()
+            filler.len(),
+            size_of_val(&filler)
         );
 
         let mut transaction = i2s_tx
