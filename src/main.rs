@@ -125,10 +125,9 @@ impl GameState {
 }
 
 #[embassy_executor::task]
-async fn game_loop(mut dot_matrix: DotMatrix<'static>) {
+async fn game_loop(mut dot_matrix: DotMatrix<'static>, mut highscore: HighScore) {
     info!("Starting game loop!");
     let mut last_tick = Instant::now();
-    let mut highscore = HighScore::new();
 
     loop {
         let now = Instant::now();
@@ -161,8 +160,13 @@ async fn main(spawner: Spawner) {
     //let mut rng = Rng::new(peripherals.RNG);
 
     let mut button = Input::new(peripherals.GPIO9, Pull::Up);
+    let mut highscore = HighScore::new();
+    if button.is_low() {
+        info!("Resetting highscore");
+        highscore.set(0);
+    }
 
-    spawner.spawn(game_loop(dot_matrix)).ok();
+    spawner.spawn(game_loop(dot_matrix, highscore)).ok();
 
     info!("Starting main loop!");
     loop {
