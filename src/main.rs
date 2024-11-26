@@ -3,6 +3,7 @@
 
 use core::{borrow::BorrowMut, fmt::Write, ops::DerefMut};
 
+use audio::Audio;
 use ball::Ball;
 use dot_matrix::DotMatrix;
 use embassy_executor::Spawner;
@@ -22,6 +23,7 @@ use log::{error, info};
 use pad::{Pad, PadPosition};
 use text_ticker::TextTicker;
 
+mod audio;
 mod ball;
 mod dot_matrix;
 mod font;
@@ -156,6 +158,14 @@ async fn main(spawner: Spawner) {
     let sclk = Input::new(peripherals.GPIO2, Pull::Down); //CLK
 
     let dot_matrix = DotMatrix::new(mosi, cs, sclk, peripherals.SPI2);
+
+    // let audio = Audio::new(
+    //     peripherals.DMA,
+    //     peripherals.I2S0,
+    //     peripherals.GPIO3,
+    //     peripherals.GPIO4,
+    //     peripherals.GPIO5,
+    // );
 
     //let mut rng = Rng::new(peripherals.RNG);
 
