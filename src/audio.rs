@@ -23,8 +23,8 @@ fn as_u8_slice(slice: &[i16]) -> &[u8] {
 
 pub struct Audio {}
 
-impl<'d> Audio {
-    pub fn new(
+impl Audio {
+    pub fn new<'d>(
         dma: impl Peripheral<P = DMA> + 'd,
         i2s: impl Peripheral<P = impl RegisterAccess> + 'd,
         bclk: impl Peripheral<P = impl PeripheralOutput> + 'd,
@@ -34,8 +34,8 @@ impl<'d> Audio {
         let dma = Dma::new(dma);
         let dma_channel = dma.channel0;
 
-        let (tx_buffer, tx_descriptors, _, rx_descriptors) =
-            dma_circular_buffers!(NUM_SAMPLES * NUM_CHANNELS * core::mem::size_of::<i16>(), 0);
+        let (_rx_buffer, rx_descriptors, tx_buffer, tx_descriptors) =
+            dma_circular_buffers!(0, NUM_SAMPLES * NUM_CHANNELS * core::mem::size_of::<i16>());
 
         let i2s = I2s::new(
             i2s,
@@ -43,8 +43,8 @@ impl<'d> Audio {
             DataFormat::Data16Channel16,
             fugit::HertzU32::Hz(SAMPLE_RATE),
             dma_channel.configure(false, DmaPriority::Priority0),
-            tx_descriptors,
             rx_descriptors,
+            tx_descriptors,
         );
 
         let mut i2s_tx = i2s
@@ -73,10 +73,6 @@ impl<'d> Audio {
             size_of_val(&filler)
         );
 
-        let mut transaction = i2s_tx
-            .write_dma_circular(tx_buffer)
-            .expect("dma transaction");
-
         for i in (0..filler.len()).step_by(NUM_CHANNELS) {
             let sample = sin_sample();
             let (left, right) = (sample, -sample);
@@ -84,10 +80,25 @@ impl<'d> Audio {
             filler[i + 1] = right;
         }
 
-        let avail = transaction.available().unwrap_or(0);
-        let bytes_written = transaction.push(as_u8_slice(&filler)).unwrap();
-        log::info!("written bytes: {bytes_written} (available: {avail})");
+        let mut transaction = i2s_tx
+            .write_dma_circular(tx_buffer)
+            .expect("dma transaction");
 
+        loop {
+            match transaction.available() {
+                Ok(available) if available >= filler.len() => {
+                    log::info!("Writing! {} (available: {})", filler.len(), available);
+                    match transaction.push(as_u8_slice(&filler)) {
+                        Ok(written) => log::info!("Wrote {written} bytes!"),
+                        Err(e) => log::error!("Failed to write: {e:?}"),
+                    }
+                }
+                Ok(_) => {}
+                Err(error) => {
+                    log::warn!("Problem : {error:?}");
+                }
+            };
+        }
         Self {}
     }
 }
