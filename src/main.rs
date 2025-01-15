@@ -159,7 +159,7 @@ async fn main(spawner: Spawner) {
     let dot_matrix = DotMatrix::new(mosi, cs, sclk, peripherals.SPI2);
 
     let _audio = audio::Audio::new(
-        peripherals.DMA,
+        peripherals.DMA_CH2,
         peripherals.I2S0,
         peripherals.GPIO3,
         peripherals.GPIO4,

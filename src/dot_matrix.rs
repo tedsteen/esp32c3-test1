@@ -1,10 +1,7 @@
 use esp_hal::{
     gpio::interconnect::PeripheralOutput,
     peripheral::Peripheral,
-    spi::{
-        master::{Instance, Spi},
-        SpiMode,
-    },
+    spi::master::{Config, Instance, Spi},
     Blocking,
 };
 use log::{debug, trace};
@@ -22,15 +19,11 @@ impl<'a> DotMatrix<'a> {
         sclk: impl Peripheral<P = SCK> + 'a,
         spi: impl Peripheral<P = impl Instance> + 'a,
     ) -> Self {
-        let mut spi = esp_hal::spi::master::Spi::new_with_config(
+        let mut spi = esp_hal::spi::master::Spi::new(
             spi,
-            esp_hal::spi::master::Config {
-                frequency: fugit::HertzU32::MHz(2),
-                mode: SpiMode::Mode0,
-                read_bit_order: esp_hal::spi::SpiBitOrder::MSBFirst,
-                write_bit_order: esp_hal::spi::SpiBitOrder::MSBFirst,
-            },
+            Config::default().with_frequency(fugit::HertzU32::MHz(2)),
         )
+        .expect("an spi")
         .with_sck(sclk)
         .with_mosi(mosi)
         .with_cs(cs);

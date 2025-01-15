@@ -21,26 +21,23 @@ opt-level = "z"
 
 [dependencies]
 # Embassy
-embassy-executor = { version = "0.6", features = ["task-arena-size-12288"] }
+embassy-executor = { version = "0.7", features = ["task-arena-size-12288"] }
 embassy-sync = "0.6"
-embassy-time = "0.3"
+embassy-time = "0.4"
 
 # Hardware Abstraction Layer (For the SPI driver to communicate with the MAX7219)
 embedded-hal = "1"
 
 # ESP specifics
-esp-hal = { version = "0.22", features = ["esp32c3"] }
-esp-hal-embassy = { version = "0.5", features = [
-    "esp32c3",
-    "integrated-timers",
-] }
-esp-backtrace = { version = "0.14", features = [
+esp-hal = { version = "0.23", features = ["esp32c3"] }
+esp-hal-embassy = { version = "0.6", features = ["esp32c3"] }
+esp-backtrace = { version = "0.15", features = [
     "esp32c3",
     "panic-handler",
     "exception-handler",
     "println",
 ] }
-esp-println = { version = "0.12", features = ["esp32c3", "log"] }
+esp-println = { version = "0.13", features = ["esp32c3", "log"] }
 esp-storage = { version = "0.4", features = ["esp32c3"] }
 
 # storage api
