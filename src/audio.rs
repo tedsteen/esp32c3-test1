@@ -2,18 +2,17 @@ use core::f32::consts::PI;
 
 use esp_backtrace as _;
 use esp_hal::{
-    dma::{Dma, DmaPriority},
+    dma::DmaChannelFor,
     dma_circular_buffers,
     gpio::interconnect::PeripheralOutput,
-    i2s::master::{DataFormat, I2s, RegisterAccess, Standard},
+    i2s::master::{AnyI2s, DataFormat, I2s, RegisterAccess, Standard},
     peripheral::Peripheral,
-    peripherals::DMA,
 };
 use libm::sin;
 
 const SAMPLE_RATE: u32 = 44100;
 const NUM_CHANNELS: usize = 2;
-const NUM_SAMPLES: usize = 4096;
+const NUM_SAMPLES: usize = 1024 * 4;
 
 fn as_u8_slice(slice: &[i16]) -> &[u8] {
     let ptr = slice.as_ptr().cast::<u8>();
@@ -25,15 +24,12 @@ pub struct Audio {}
 
 impl Audio {
     pub fn new<'d>(
-        dma: impl Peripheral<P = DMA> + 'd,
+        dma_channel: impl Peripheral<P = impl DmaChannelFor<AnyI2s>> + 'd,
         i2s: impl Peripheral<P = impl RegisterAccess> + 'd,
         bclk: impl Peripheral<P = impl PeripheralOutput> + 'd,
         ws: impl Peripheral<P = impl PeripheralOutput> + 'd,
         dout: impl Peripheral<P = impl PeripheralOutput> + 'd,
     ) -> Self {
-        let dma = Dma::new(dma);
-        let dma_channel = dma.channel0;
-
         let (_rx_buffer, rx_descriptors, tx_buffer, tx_descriptors) =
             dma_circular_buffers!(0, NUM_SAMPLES * NUM_CHANNELS * core::mem::size_of::<i16>());
 
@@ -42,7 +38,7 @@ impl Audio {
             Standard::Philips,
             DataFormat::Data16Channel16,
             fugit::HertzU32::Hz(SAMPLE_RATE),
-            dma_channel.configure(false, DmaPriority::Priority0),
+            dma_channel,
             rx_descriptors,
             tx_descriptors,
         );
@@ -64,40 +60,36 @@ impl Audio {
             (smpl_f32 * i16::MAX as f32) as i16
         };
 
-        let mut filler = [0i16; NUM_SAMPLES];
-
-        log::info!(
-            "DMA buffer: {} bytes, filler: {} channel samples ({} bytes)",
-            tx_buffer.len(),
-            filler.len(),
-            size_of_val(&filler)
-        );
-
-        for i in (0..filler.len()).step_by(NUM_CHANNELS) {
-            let sample = sin_sample();
-            let (left, right) = (sample, -sample);
-            filler[i] = left;
-            filler[i + 1] = right;
-        }
-
+        log::info!("DMA buffer: {} bytes", tx_buffer.len(),);
         let mut transaction = i2s_tx
             .write_dma_circular(tx_buffer)
             .expect("dma transaction");
 
         loop {
-            match transaction.available() {
-                Ok(available) if available >= filler.len() => {
-                    log::info!("Writing! {} (available: {})", filler.len(), available);
-                    match transaction.push(as_u8_slice(&filler)) {
-                        Ok(written) => log::info!("Wrote {written} bytes!"),
-                        Err(e) => log::error!("Failed to write: {e:?}"),
+            match transaction.push_with(|samples| {
+                if samples.len() > 4 {
+                    let volume = 0.1;
+                    for s in samples.chunks_exact_mut(4) {
+                        let sample = (sin_sample() as f32 * volume) as i16;
+                        let (left, right) = (sample, -sample);
+                        s[0] = left.to_le_bytes()[0];
+                        s[1] = left.to_le_bytes()[1];
+                        s[2] = right.to_le_bytes()[0];
+                        s[3] = right.to_le_bytes()[1];
+                    }
+                    return samples.len();
+                }
+                0
+            }) {
+                Ok(sent) => {
+                    if sent > 0 {
+                        log::info!("Wrote {sent} bytes");
                     }
                 }
-                Ok(_) => {}
                 Err(error) => {
                     log::warn!("Problem : {error:?}");
                 }
-            };
+            }
         }
         Self {}
     }
