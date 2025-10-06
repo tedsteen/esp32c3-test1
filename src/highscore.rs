@@ -11,17 +11,6 @@ pub struct HighScore {
 }
 
 impl HighScore {
-    pub fn new() -> Self {
-        let flash_storage = FlashStorage::new();
-
-        info!("Flash size = {}", flash_storage.capacity());
-
-        Self {
-            flash_storage,
-            score: None,
-        }
-    }
-
     pub fn get(&mut self) -> u32 {
         if self.score.is_none() {
             let buffer = &mut [0_u8; HEADER.len()];
@@ -55,6 +44,19 @@ impl HighScore {
                 .write(FLASH_ADDR + HEADER.len() as u32, &score.to_be_bytes())
                 .expect("a highscore to be written");
             self.score = Some(score);
+        }
+    }
+}
+
+impl Default for HighScore {
+    fn default() -> Self {
+        let flash_storage = FlashStorage::new();
+
+        info!("Flash size = {}", flash_storage.capacity());
+
+        Self {
+            flash_storage,
+            score: None,
         }
     }
 }

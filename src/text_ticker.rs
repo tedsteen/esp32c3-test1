@@ -32,7 +32,7 @@ impl<const N: usize> TextTicker<N> {
     }
 
     pub fn draw(&self, dot_matrix: &mut DotMatrix) {
-        if self.text.len() == 0 {
+        if self.text.is_empty() {
             return;
         }
 

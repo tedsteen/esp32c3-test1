@@ -1,7 +1,10 @@
 use esp_hal::{
     gpio::interconnect::PeripheralOutput,
-    peripheral::Peripheral,
-    spi::master::{Config, Instance, Spi},
+    spi::{
+        master::{Config, Instance, Spi},
+        Mode,
+    },
+    time::Rate,
     Blocking,
 };
 use log::{debug, trace};
@@ -13,38 +16,43 @@ pub struct DotMatrix<'a> {
 }
 
 impl<'a> DotMatrix<'a> {
-    pub fn new<SCK: PeripheralOutput>(
-        mosi: impl Peripheral<P = SCK> + 'a,
-        cs: impl Peripheral<P = SCK> + 'a,
-        sclk: impl Peripheral<P = SCK> + 'a,
-        spi: impl Peripheral<P = impl Instance> + 'a,
+    pub fn new(
+        spi: impl Instance + 'a,
+        clk: impl PeripheralOutput<'a>,
+        cs: impl PeripheralOutput<'a>,
+        din: impl PeripheralOutput<'a>,
     ) -> Self {
-        let mut spi = esp_hal::spi::master::Spi::new(
+        let mut spi = Spi::new(
             spi,
-            Config::default().with_frequency(fugit::HertzU32::MHz(2)),
+            Config::default()
+                .with_frequency(Rate::from_mhz(2))
+                .with_mode(Mode::_0),
         )
         .expect("an spi")
-        .with_sck(sclk)
-        .with_mosi(mosi)
-        .with_cs(cs);
+        .with_cs(cs)
+        .with_mosi(din)
+        .with_sck(clk);
 
         // Zero out all registers
         for cmd in 0..16 {
-            spi.write_bytes(&[cmd, 0x00]).expect("bytes to be written");
+            spi.transfer(&mut [cmd, 0x00]).expect("bytes to be written");
         }
 
         // Power Up Device
-        spi.write_bytes(&[0x0C, 0x01]).expect("bytes to be written");
+        spi.transfer(&mut [0x0C, 0x01])
+            .expect("bytes to be written");
 
         // Set up Decode Mode to work with the MAX2719
-        spi.write_bytes(&[0x09, 0x00]).expect("bytes to be written");
+        spi.transfer(&mut [0x09, 0x00])
+            .expect("bytes to be written");
 
         //Configure Scan Limit to work with the MAX2719
-        spi.write_bytes(&[0x0b, 0x07]).expect("bytes to be written");
+        spi.transfer(&mut [0x0b, 0x07])
+            .expect("bytes to be written");
 
         let mut s = Self {
             spi,
-            intensity: 0xFF,
+            intensity: 0x0F,
             buffer: [0; 8],
         };
         s.set_intensity(0x0F);
@@ -57,7 +65,7 @@ impl<'a> DotMatrix<'a> {
             self.intensity = intensity;
             debug!("Write intensity: 0x{:01x}", intensity);
             self.spi
-                .write_bytes(&[0x0a, intensity])
+                .transfer(&mut [0x0a, intensity])
                 .expect("bytes to be written");
         }
     }
@@ -87,7 +95,7 @@ impl<'a> DotMatrix<'a> {
     pub fn flush_buffer_to_spi(&mut self) {
         for i in 0..8 {
             self.spi
-                .write_bytes(&[i + 1, self.buffer[i as usize]])
+                .transfer(&mut [i + 1, self.buffer[i as usize]])
                 .expect("buffer to be written to spi");
         }
     }
@@ -96,7 +104,7 @@ impl<'a> DotMatrix<'a> {
         self.buffer[0..ROWS].copy_from_slice(&bitmap[0..ROWS]);
     }
 
-    pub(crate) fn shift(&mut self, x: u8, y: u8) {
+    pub fn shift(&mut self, x: u8, y: u8) {
         for r in 0..8 {
             self.buffer[r] >>= x;
         }

@@ -1,5 +1,7 @@
 {
   "rust-analyzer.checkOnSave.command": "clippy",
+  "rust-analyzer.cargo.allTargets": false,
+  "rust-analyzer.cargo.target": "riscv32imc-unknown-none-elf",
   "editor.formatOnSave": true,
   "[rust]": {
     "editor.defaultFormatter": "rust-lang.rust-analyzer"

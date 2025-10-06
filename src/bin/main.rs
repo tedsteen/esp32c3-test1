@@ -1,36 +1,37 @@
 #![no_std]
 #![no_main]
+#![deny(
+    clippy::mem_forget,
+    reason = "mem::forget is generally not safe to do with esp_hal types, especially those \
+    holding buffers for the duration of a data transfer."
+)]
 
-use core::{borrow::BorrowMut, fmt::Write, ops::DerefMut};
-
-use ball::Ball;
-use dot_matrix::DotMatrix;
 use embassy_executor::Spawner;
-use embassy_sync::{blocking_mutex::raw::CriticalSectionRawMutex, mutex::Mutex};
+use esp32c3_test1::ball::Ball;
+use esp32c3_test1::font;
+use esp32c3_test1::highscore::HighScore;
+use esp32c3_test1::pad::{Pad, PadPosition};
+
+use core::fmt::Write;
+use core::sync::atomic::AtomicBool;
 use embassy_time::{Duration, Instant, Timer};
-
-use esp_backtrace as _;
-use esp_hal::{
-    gpio::{Input, Pull},
-    timer::timg::TimerGroup,
-};
-use esp_println::logger::init_logger_from_env;
-
+use esp32c3_test1::dot_matrix::DotMatrix;
+use esp32c3_test1::text_ticker::TextTicker;
+use esp_hal::clock::CpuClock;
+use esp_hal::gpio::{Input, InputConfig, Pull};
+use esp_hal::timer::systimer::SystemTimer;
 use heapless::String;
-use highscore::HighScore;
 use log::{error, info};
-use pad::{Pad, PadPosition};
-use text_ticker::TextTicker;
+#[panic_handler]
+fn panic(_: &core::panic::PanicInfo) -> ! {
+    loop {}
+}
 
-// mod audio;
-mod ball;
-mod dot_matrix;
-mod font;
-mod highscore;
-mod pad;
-mod text_ticker;
+// This creates a default app-descriptor required by the esp-idf bootloader.
+// For more information see: <https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/app_image_format.html#application-description>
+esp_bootloader_esp_idf::esp_app_desc!();
 
-static GAME_STATE: Mutex<CriticalSectionRawMutex, GameState> = Mutex::new(GameState::New());
+static BTN: AtomicBool = AtomicBool::new(false);
 
 enum GameState {
     New(),
@@ -129,64 +130,17 @@ impl GameState {
 async fn game_loop(mut dot_matrix: DotMatrix<'static>, mut highscore: HighScore) {
     info!("Starting game loop!");
     let mut last_tick = Instant::now();
-
+    let mut game_state = GameState::New();
     loop {
         let now = Instant::now();
         let delta_time_ms = now.duration_since(last_tick).as_millis();
         last_tick = now;
-        GAME_STATE
-            .lock()
-            .await
-            .borrow_mut()
-            .tick(delta_time_ms, &mut highscore, &mut dot_matrix)
-            .await;
-
-        Timer::after(Duration::from_millis(16)).await;
-    }
-}
-
-#[esp_hal_embassy::main]
-async fn main(spawner: Spawner) {
-    init_logger_from_env();
-    let peripherals = esp_hal::init(esp_hal::Config::default());
-    let timg0 = TimerGroup::new(peripherals.TIMG0);
-    esp_hal_embassy::init(timg0.timer0);
-
-    let mosi = Input::new(peripherals.GPIO0, Pull::Down); //DIN
-    let cs = Input::new(peripherals.GPIO1, Pull::Down); //CS
-    let sclk = Input::new(peripherals.GPIO2, Pull::Down); //CLK
-
-    let dot_matrix = DotMatrix::new(mosi, cs, sclk, peripherals.SPI2);
-
-    // let _audio = audio::Audio::new(
-    //     peripherals.DMA_CH2,
-    //     peripherals.I2S0,
-    //     peripherals.GPIO3,
-    //     peripherals.GPIO4,
-    //     peripherals.GPIO5,
-    // );
-
-    //let mut rng = Rng::new(peripherals.RNG);
-
-    let mut button = Input::new(peripherals.GPIO9, Pull::Up);
-    let mut highscore = HighScore::new();
-    if button.is_low() {
-        info!("Resetting highscore");
-        highscore.set(0);
-    }
-
-    spawner.spawn(game_loop(dot_matrix, highscore)).ok();
-
-    info!("Starting main loop!");
-    loop {
-        button.wait_for_low().await;
-        {
-            let mut game_state = GAME_STATE.lock().await;
-            let game_state = game_state.deref_mut();
-            match game_state {
+        if BTN.load(core::sync::atomic::Ordering::Relaxed) {
+            BTN.store(false, core::sync::atomic::Ordering::Relaxed);
+            match &mut game_state {
                 GameState::New() => {}
                 GameState::Intro(_) | GameState::GameOver(_) => {
-                    *game_state = GameState::Countdown(3000);
+                    game_state = GameState::Countdown(3000);
                 }
                 GameState::Countdown(_) => {}
                 GameState::Playing { pad, .. } => {
@@ -197,6 +151,55 @@ async fn main(spawner: Spawner) {
             }
         }
 
+        game_state
+            .tick(delta_time_ms, &mut highscore, &mut dot_matrix)
+            .await;
+
+        Timer::after(Duration::from_millis(16)).await;
+    }
+}
+
+#[esp_hal_embassy::main]
+async fn main(spawner: Spawner) {
+    esp_println::logger::init_logger_from_env();
+
+    let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
+    let peripherals = esp_hal::init(config);
+
+    let timer0 = SystemTimer::new(peripherals.SYSTIMER);
+    esp_hal_embassy::init(timer0.alarm0);
+
+    let dot_matrix = DotMatrix::new(
+        peripherals.SPI2,
+        peripherals.GPIO0,
+        peripherals.GPIO1,
+        peripherals.GPIO2,
+    );
+
+    // let _audio = audio::Audio::new(
+    //     peripherals.DMA_CH2,
+    //     peripherals.I2S0,
+    //     peripherals.GPIO3,
+    //     peripherals.GPIO4,
+    //     peripherals.GPIO5,
+    // );
+
+    let mut button = Input::new(
+        peripherals.GPIO9,
+        InputConfig::default().with_pull(Pull::Up),
+    );
+    let mut highscore = HighScore::default();
+    if button.is_low() {
+        info!("Resetting highscore");
+        highscore.set(0);
+    }
+
+    spawner.spawn(game_loop(dot_matrix, highscore)).ok();
+
+    info!("Starting main loop!");
+    loop {
+        button.wait_for_low().await;
+        BTN.store(true, core::sync::atomic::Ordering::Relaxed);
         Timer::after_millis(50).await;
         button.wait_for_high().await;
         Timer::after_millis(50).await;
