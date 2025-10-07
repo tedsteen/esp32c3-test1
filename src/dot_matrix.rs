@@ -1,7 +1,7 @@
 use esp_hal::{
     gpio::interconnect::PeripheralOutput,
     spi::{
-        master::{Config, Instance, Spi},
+        master::{Config, ConfigError, Instance, Spi},
         Mode,
     },
     time::Rate,
@@ -15,59 +15,53 @@ pub struct DotMatrix<'a> {
     spi: Spi<'a, Blocking>,
 }
 
+type Result<T> = core::result::Result<T, DotMatrixError>;
+
+#[derive(Debug)]
+pub enum DotMatrixError {
+    SpiInitFailed(ConfigError),
+    TransferFailed(esp_hal::spi::Error),
+}
+
 impl<'a> DotMatrix<'a> {
     pub fn new(
         spi: impl Instance + 'a,
         clk: impl PeripheralOutput<'a>,
         cs: impl PeripheralOutput<'a>,
         din: impl PeripheralOutput<'a>,
-    ) -> Self {
+    ) -> Result<Self> {
         let mut spi = Spi::new(
             spi,
             Config::default()
                 .with_frequency(Rate::from_mhz(2))
                 .with_mode(Mode::_0),
         )
-        .expect("an spi")
+        .map_err(DotMatrixError::SpiInitFailed)?
         .with_cs(cs)
         .with_mosi(din)
         .with_sck(clk);
 
-        // Zero out all registers
-        for cmd in 0..16 {
-            spi.transfer(&mut [cmd, 0x00]).expect("bytes to be written");
-        }
+        let initial_intensity = 0x0F;
 
-        // Power Up Device
-        spi.transfer(&mut [0x0C, 0x01])
-            .expect("bytes to be written");
+        initialise_spi(&mut spi, initial_intensity).map_err(DotMatrixError::TransferFailed)?;
 
-        // Set up Decode Mode to work with the MAX2719
-        spi.transfer(&mut [0x09, 0x00])
-            .expect("bytes to be written");
-
-        //Configure Scan Limit to work with the MAX2719
-        spi.transfer(&mut [0x0b, 0x07])
-            .expect("bytes to be written");
-
-        let mut s = Self {
+        Ok(Self {
             spi,
-            intensity: 0x0F,
+            intensity: initial_intensity,
             buffer: [0; 8],
-        };
-        s.set_intensity(0x0F);
-        s
+        })
     }
 
     // NOTE: Max intensity is 0x0F
-    pub fn set_intensity(&mut self, intensity: u8) {
+    pub fn set_intensity(&mut self, intensity: u8) -> Result<()> {
         if self.intensity != intensity {
             self.intensity = intensity;
             debug!("Write intensity: 0x{:01x}", intensity);
             self.spi
-                .transfer(&mut [0x0a, intensity])
-                .expect("bytes to be written");
+                .transfer(&mut [0x0A, intensity])
+                .map_err(DotMatrixError::TransferFailed)?;
         }
+        Ok(())
     }
 
     pub fn fill(&mut self) {
@@ -92,12 +86,13 @@ impl<'a> DotMatrix<'a> {
         self.buffer[row as usize] = row_data;
     }
 
-    pub fn flush_buffer_to_spi(&mut self) {
+    pub fn flush_buffer_to_spi(&mut self) -> Result<()> {
         for i in 0..8 {
             self.spi
                 .transfer(&mut [i + 1, self.buffer[i as usize]])
-                .expect("buffer to be written to spi");
+                .map_err(DotMatrixError::TransferFailed)?;
         }
+        Ok(())
     }
 
     pub fn draw<const ROWS: usize>(&mut self, bitmap: &[u8; ROWS]) {
@@ -110,4 +105,24 @@ impl<'a> DotMatrix<'a> {
         }
         self.buffer.rotate_right(y as usize);
     }
+}
+
+fn initialise_spi(
+    spi: &mut Spi<'_, Blocking>,
+    initial_intensity: u8,
+) -> core::result::Result<(), esp_hal::spi::Error> {
+    // Zero out all registers
+    for cmd in 0..16 {
+        spi.transfer(&mut [cmd, 0x00])?;
+    }
+    // Power Up Device
+    spi.transfer(&mut [0x0C, 0x01])?;
+    // Set up Decode Mode to work with the MAX2719
+    spi.transfer(&mut [0x09, 0x00])?;
+    //Configure Scan Limit to work with the MAX2719
+    spi.transfer(&mut [0x0b, 0x07])?;
+
+    //Set initial intensity
+    spi.transfer(&mut [0x0A, initial_intensity])?;
+    Ok(())
 }

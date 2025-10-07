@@ -3,13 +3,17 @@ use log::info;
 
 use crate::{
     ball::Ball,
-    dot_matrix::DotMatrix,
+    dot_matrix::{DotMatrix, DotMatrixError},
     font,
     highscore::HighScore,
     pad::{Pad, PadPosition},
     text_ticker::TextTicker,
 };
-
+type Result<T> = core::result::Result<T, GameStateError>;
+#[derive(Debug)]
+pub enum GameStateError {
+    TickFailed(DotMatrixError),
+}
 pub enum GameState {
     Intro(TextTicker<100>),
     Countdown(i64),
@@ -46,12 +50,14 @@ impl GameState {
         delta_time_ms: u64,
         highscore: &mut HighScore,
         dot_matrix: &mut DotMatrix<'_>,
-    ) {
+    ) -> Result<()> {
         match self {
             GameState::Intro(text) | GameState::GameOver(text) => {
                 text.update(delta_time_ms);
                 text.draw(dot_matrix);
-                dot_matrix.flush_buffer_to_spi();
+                dot_matrix
+                    .flush_buffer_to_spi()
+                    .map_err(GameStateError::TickFailed)?;
             }
             GameState::Countdown(countdown) => {
                 *countdown -= delta_time_ms as i64;
@@ -62,7 +68,9 @@ impl GameState {
 
                 dot_matrix.draw(&countdown_as_bitmap);
                 dot_matrix.shift(2, 1);
-                dot_matrix.flush_buffer_to_spi();
+                dot_matrix
+                    .flush_buffer_to_spi()
+                    .map_err(GameStateError::TickFailed)?;
                 dot_matrix.clear();
 
                 if *countdown <= 0 {
@@ -78,7 +86,9 @@ impl GameState {
 
                     pad.draw(dot_matrix);
                     ball.draw(dot_matrix);
-                    dot_matrix.flush_buffer_to_spi();
+                    dot_matrix
+                        .flush_buffer_to_spi()
+                        .map_err(GameStateError::TickFailed)?;
                 }
                 Pad::Dead => {
                     let message = if *score > highscore.get() {
@@ -97,5 +107,6 @@ impl GameState {
                 }
             },
         }
+        Ok(())
     }
 }

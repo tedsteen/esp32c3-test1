@@ -18,7 +18,7 @@ use esp_hal::clock::CpuClock;
 use esp_hal::gpio::{Input, InputConfig, Pull};
 use esp_hal::timer::systimer::SystemTimer;
 use heapless::{format, String};
-use log::info;
+use log::{error, info};
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo) -> ! {
     loop {}
@@ -42,19 +42,24 @@ async fn game_loop(
     let mut game_state = GameState::Intro(TextTicker::new(
         intro_message_override
             .map(|s| String::try_from(s).expect("a string"))
-            .unwrap_or_else(|| format!("Highscore:{} ", highscore.get()).expect("a string")),
+            .unwrap_or_else(|| format!(" Highscore:{} ", highscore.get()).expect("a string")),
         0.008,
     ));
     loop {
         let now = Instant::now();
         let delta_time_ms = now.duration_since(last_tick).as_millis();
-        last_tick = now;
+
         if BTN_DOWN.load(core::sync::atomic::Ordering::Relaxed) {
             game_state.button_click();
             BTN_DOWN.store(false, core::sync::atomic::Ordering::Relaxed);
         }
 
-        game_state.tick(delta_time_ms, &mut highscore, &mut dot_matrix);
+        match game_state.tick(delta_time_ms, &mut highscore, &mut dot_matrix) {
+            Ok(_) => {
+                last_tick = now;
+            }
+            Err(e) => error!("Failed to advance game state: {e:?}"),
+        }
 
         Timer::after(Duration::from_millis(2)).await;
     }
@@ -70,45 +75,50 @@ async fn main(spawner: Spawner) {
     let timer0 = SystemTimer::new(peripherals.SYSTIMER);
     esp_hal_embassy::init(timer0.alarm0);
 
-    let dot_matrix = DotMatrix::new(
+    match DotMatrix::new(
         peripherals.SPI2,
         peripherals.GPIO0,
         peripherals.GPIO1,
         peripherals.GPIO2,
-    );
+    ) {
+        Ok(dot_matrix) => {
+            // let _audio = audio::Audio::new(
+            //     peripherals.DMA_CH2,
+            //     peripherals.I2S0,
+            //     peripherals.GPIO3,
+            //     peripherals.GPIO4,
+            //     peripherals.GPIO5,
+            // );
 
-    // let _audio = audio::Audio::new(
-    //     peripherals.DMA_CH2,
-    //     peripherals.I2S0,
-    //     peripherals.GPIO3,
-    //     peripherals.GPIO4,
-    //     peripherals.GPIO5,
-    // );
+            let mut button = Input::new(
+                peripherals.GPIO9,
+                InputConfig::default().with_pull(Pull::Up),
+            );
+            let mut highscore = HighScore::default();
+            let mut intro_text = None;
+            if button.is_low() {
+                info!(" Resetting highscore");
+                intro_text = Some("RESET HIGHSCORE");
+                highscore.set(0);
+            }
 
-    let mut button = Input::new(
-        peripherals.GPIO9,
-        InputConfig::default().with_pull(Pull::Up),
-    );
-    let mut highscore = HighScore::default();
-    let mut intro_text = None;
-    if button.is_low() {
-        info!("Resetting highscore");
-        intro_text = Some("RESET HIGHSCORE");
-        highscore.set(0);
-    }
+            spawner
+                .spawn(game_loop(dot_matrix, highscore, intro_text))
+                .ok();
 
-    spawner
-        .spawn(game_loop(dot_matrix, highscore, intro_text))
-        .ok();
+            button.wait_for_high().await; // If highscore reset then wait for the button to be released
 
-    button.wait_for_high().await; // If highscore reset then wait for the button to be released
-
-    info!("Starting main loop!");
-    loop {
-        button.wait_for_low().await;
-        BTN_DOWN.store(true, core::sync::atomic::Ordering::Relaxed);
-        Timer::after_millis(50).await;
-        button.wait_for_high().await;
-        Timer::after_millis(50).await;
+            info!("Starting main loop!");
+            loop {
+                button.wait_for_low().await;
+                BTN_DOWN.store(true, core::sync::atomic::Ordering::Relaxed);
+                Timer::after_millis(50).await;
+                button.wait_for_high().await;
+                Timer::after_millis(50).await;
+            }
+        }
+        Err(e) => {
+            panic!("Failed to setup dot matrix display: {e:?}");
+        }
     }
 }
