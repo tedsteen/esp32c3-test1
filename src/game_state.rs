@@ -22,14 +22,6 @@ pub enum GameState {
 }
 
 impl GameState {
-    fn start_new_game(&mut self) {
-        *self = Self::Playing {
-            ball: Ball::new(3, 3),
-            pad: Pad::new(PadPosition::Bottom(1.0)),
-            score: 0,
-        }
-    }
-
     pub fn button_click(&mut self) {
         match self {
             GameState::Intro(_) | GameState::GameOver(_) => {
@@ -51,13 +43,11 @@ impl GameState {
         highscore: &mut HighScore,
         dot_matrix: &mut DotMatrix<'_>,
     ) -> Result<()> {
+        dot_matrix.clear();
         match self {
             GameState::Intro(text) | GameState::GameOver(text) => {
                 text.update(delta_time_ms);
                 text.draw(dot_matrix);
-                dot_matrix
-                    .flush_buffer_to_spi()
-                    .map_err(GameStateError::AdvanceFailed)?;
             }
             GameState::Countdown(countdown) => {
                 *countdown -= delta_time_ms as i64;
@@ -68,13 +58,13 @@ impl GameState {
 
                 dot_matrix.draw(&countdown_as_bitmap);
                 dot_matrix.shift(2, 1);
-                dot_matrix
-                    .flush_buffer_to_spi()
-                    .map_err(GameStateError::AdvanceFailed)?;
-                dot_matrix.clear();
 
                 if *countdown <= 0 {
-                    self.start_new_game();
+                    *self = Self::Playing {
+                        ball: Ball::new(3, 3),
+                        pad: Pad::new(PadPosition::Bottom(1.0)),
+                        score: 0,
+                    }
                 }
             }
             GameState::Playing { ball, pad, score } => match pad {
@@ -82,13 +72,8 @@ impl GameState {
                     pad.update(delta_time_ms);
                     ball.update(pad, delta_time_ms, score);
 
-                    dot_matrix.clear();
-
                     pad.draw(dot_matrix);
                     ball.draw(dot_matrix);
-                    dot_matrix
-                        .flush_buffer_to_spi()
-                        .map_err(GameStateError::AdvanceFailed)?;
                 }
                 Pad::Dead => {
                     let message = if *score > highscore.get() {
@@ -107,6 +92,9 @@ impl GameState {
                 }
             },
         }
+        dot_matrix
+            .flush_buffer_to_spi()
+            .map_err(GameStateError::AdvanceFailed)?;
         Ok(())
     }
 }

@@ -109,9 +109,9 @@ impl Pad {
             info!("Health: {}", health);
             if *health == 0 {
                 info!("YOU DED!");
-                *alive_state = PadState::Dying(94 * 16)
+                *alive_state = PadState::Dying(16 * 70)
             } else {
-                *alive_state = PadState::Hurting(10 * 16);
+                *alive_state = PadState::Hurting(16 * 10);
             }
         }
     }
@@ -152,12 +152,7 @@ impl Pad {
         {
             match &alive_state {
                 PadState::Normal => position.draw(dot_matrix),
-                PadState::Hurting(countdown) => {
-                    if countdown % (16 * 5) > 16 * 3 {
-                        dot_matrix.fill();
-                    }
-                }
-                PadState::Dying(countdown) => {
+                PadState::Hurting(countdown) | PadState::Dying(countdown) => {
                     if countdown % (16 * 5) > 16 * 3 {
                         dot_matrix.fill();
                     }
