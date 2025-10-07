@@ -54,7 +54,7 @@ async fn game_loop(
             BTN_DOWN.store(false, core::sync::atomic::Ordering::Relaxed);
         }
 
-        match game_state.tick(delta_time_ms, &mut highscore, &mut dot_matrix) {
+        match game_state.advance(delta_time_ms, &mut highscore, &mut dot_matrix) {
             Ok(_) => {
                 last_tick = now;
             }

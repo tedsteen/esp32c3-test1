@@ -12,7 +12,7 @@ use crate::{
 type Result<T> = core::result::Result<T, GameStateError>;
 #[derive(Debug)]
 pub enum GameStateError {
-    TickFailed(DotMatrixError),
+    AdvanceFailed(DotMatrixError),
 }
 pub enum GameState {
     Intro(TextTicker<100>),
@@ -45,7 +45,7 @@ impl GameState {
         }
     }
 
-    pub fn tick(
+    pub fn advance(
         &mut self,
         delta_time_ms: u64,
         highscore: &mut HighScore,
@@ -57,7 +57,7 @@ impl GameState {
                 text.draw(dot_matrix);
                 dot_matrix
                     .flush_buffer_to_spi()
-                    .map_err(GameStateError::TickFailed)?;
+                    .map_err(GameStateError::AdvanceFailed)?;
             }
             GameState::Countdown(countdown) => {
                 *countdown -= delta_time_ms as i64;
@@ -70,7 +70,7 @@ impl GameState {
                 dot_matrix.shift(2, 1);
                 dot_matrix
                     .flush_buffer_to_spi()
-                    .map_err(GameStateError::TickFailed)?;
+                    .map_err(GameStateError::AdvanceFailed)?;
                 dot_matrix.clear();
 
                 if *countdown <= 0 {
@@ -88,7 +88,7 @@ impl GameState {
                     ball.draw(dot_matrix);
                     dot_matrix
                         .flush_buffer_to_spi()
-                        .map_err(GameStateError::TickFailed)?;
+                        .map_err(GameStateError::AdvanceFailed)?;
                 }
                 Pad::Dead => {
                     let message = if *score > highscore.get() {
