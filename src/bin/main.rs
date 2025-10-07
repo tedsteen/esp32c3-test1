@@ -42,7 +42,7 @@ async fn game_loop(
     let mut game_state = GameState::Intro(TextTicker::new(
         intro_message_override
             .map(|s| String::try_from(s).expect("a string"))
-            .unwrap_or_else(|| format!(" Highscore:{} ", highscore.get()).expect("a string")),
+            .unwrap_or_else(|| format!(" Highscore:{}", highscore.get()).expect("a string")),
         0.008,
     ));
     loop {
@@ -97,8 +97,8 @@ async fn main(spawner: Spawner) {
             let mut highscore = HighScore::default();
             let mut intro_text = None;
             if button.is_low() {
-                info!(" Resetting highscore");
-                intro_text = Some("RESET HIGHSCORE");
+                info!("Resetting highscore");
+                intro_text = Some(" RESET HIGHSCORE");
                 highscore.set(0);
             }
 

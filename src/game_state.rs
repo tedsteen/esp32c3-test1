@@ -98,10 +98,10 @@ impl GameState {
                         "Score"
                     };
 
-                    info!("Score: {message} {score}");
+                    info!("Result: {message} {score}");
 
                     *self = GameState::GameOver(TextTicker::new(
-                        format!("{message} {score} ").expect("A string"),
+                        format!(" {message} {score}").expect("A string"),
                         0.014,
                     ));
                 }
