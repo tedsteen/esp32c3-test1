@@ -1,0 +1,101 @@
+use heapless::format;
+use log::info;
+
+use crate::{
+    ball::Ball,
+    dot_matrix::DotMatrix,
+    font,
+    highscore::HighScore,
+    pad::{Pad, PadPosition},
+    text_ticker::TextTicker,
+};
+
+pub enum GameState {
+    Intro(TextTicker<100>),
+    Countdown(i64),
+    Playing { ball: Ball, pad: Pad, score: u32 },
+    GameOver(TextTicker<100>),
+}
+
+impl GameState {
+    fn start_new_game(&mut self) {
+        *self = Self::Playing {
+            ball: Ball::new(3, 3),
+            pad: Pad::new(PadPosition::Bottom(1.0)),
+            score: 0,
+        }
+    }
+
+    pub fn button_click(&mut self) {
+        match self {
+            GameState::Intro(_) | GameState::GameOver(_) => {
+                *self = GameState::Countdown(3000);
+            }
+            GameState::Playing {
+                pad: Pad::Alive { position, .. },
+                ..
+            } => {
+                position.next();
+            }
+            _ => {}
+        }
+    }
+
+    pub fn tick(
+        &mut self,
+        delta_time_ms: u64,
+        highscore: &mut HighScore,
+        dot_matrix: &mut DotMatrix<'_>,
+    ) {
+        match self {
+            GameState::Intro(text) | GameState::GameOver(text) => {
+                text.update(delta_time_ms);
+                text.draw(dot_matrix);
+                dot_matrix.flush_buffer_to_spi();
+            }
+            GameState::Countdown(countdown) => {
+                *countdown -= delta_time_ms as i64;
+                let countdown_as_secs = 1 + (*countdown / 1000);
+                let countdown_as_bitmap =
+                    *font::get_font_data(&((b'0' + countdown_as_secs as u8) as char))
+                        .expect("a font for a number");
+
+                dot_matrix.draw(&countdown_as_bitmap);
+                dot_matrix.shift(2, 1);
+                dot_matrix.flush_buffer_to_spi();
+                dot_matrix.clear();
+
+                if *countdown <= 0 {
+                    self.start_new_game();
+                }
+            }
+            GameState::Playing { ball, pad, score } => match pad {
+                Pad::Alive { .. } => {
+                    pad.update(delta_time_ms);
+                    ball.update(pad, delta_time_ms, score);
+
+                    dot_matrix.clear();
+
+                    pad.draw(dot_matrix);
+                    ball.draw(dot_matrix);
+                    dot_matrix.flush_buffer_to_spi();
+                }
+                Pad::Dead => {
+                    let message = if *score > highscore.get() {
+                        highscore.set(*score);
+                        "New highscore!"
+                    } else {
+                        "Score"
+                    };
+
+                    info!("Score: {message} {score}");
+
+                    *self = GameState::GameOver(TextTicker::new(
+                        format!("{message} {score} ").expect("A string"),
+                        0.014,
+                    ));
+                }
+            },
+        }
+    }
+}

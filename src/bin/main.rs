@@ -7,12 +7,9 @@
 )]
 
 use embassy_executor::Spawner;
-use esp32c3_test1::ball::Ball;
-use esp32c3_test1::font;
+use esp32c3_test1::game_state::GameState;
 use esp32c3_test1::highscore::HighScore;
-use esp32c3_test1::pad::{Pad, PadPosition};
 
-use core::fmt::Write;
 use core::sync::atomic::AtomicBool;
 use embassy_time::{Duration, Instant, Timer};
 use esp32c3_test1::dot_matrix::DotMatrix;
@@ -20,8 +17,8 @@ use esp32c3_test1::text_ticker::TextTicker;
 use esp_hal::clock::CpuClock;
 use esp_hal::gpio::{Input, InputConfig, Pull};
 use esp_hal::timer::systimer::SystemTimer;
-use heapless::String;
-use log::{error, info};
+use heapless::{format, String};
+use log::info;
 #[panic_handler]
 fn panic(_: &core::panic::PanicInfo) -> ! {
     loop {}
@@ -31,131 +28,35 @@ fn panic(_: &core::panic::PanicInfo) -> ! {
 // For more information see: <https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/app_image_format.html#application-description>
 esp_bootloader_esp_idf::esp_app_desc!();
 
-static BTN: AtomicBool = AtomicBool::new(false);
-
-enum GameState {
-    New(),
-    Intro(TextTicker<100>),
-    Countdown(i64),
-    Playing { ball: Ball, pad: Pad, score: u32 },
-    GameOver(TextTicker<100>),
-}
-
-impl GameState {
-    fn start_new_game(&mut self) {
-        *self = Self::Playing {
-            ball: Ball::new(3, 3),
-            pad: Pad::new(PadPosition::Bottom(1.0)),
-            score: 0,
-        }
-    }
-
-    async fn tick(
-        &mut self,
-        delta_time_ms: u64,
-        highscore: &mut HighScore,
-        dot_matrix: &mut DotMatrix<'_>,
-    ) {
-        if let GameState::Playing {
-            pad: Pad::Dead,
-            score,
-            ..
-        } = self
-        {
-            let message = if *score > highscore.get() {
-                highscore.set(*score);
-                "New highscore!"
-            } else {
-                "Score"
-            };
-
-            info!("Score: {message} {score}");
-            let mut game_over_ticker_text = String::<100>::new();
-            if write!(game_over_ticker_text, "{message} {score} ").is_err() {
-                error!("Failed to write game over ticker string");
-            };
-
-            *self = GameState::GameOver(TextTicker::new(game_over_ticker_text, 0.014));
-        }
-
-        match self {
-            GameState::New() => {
-                let mut highscore_ticker_text = String::<100>::new();
-                if write!(highscore_ticker_text, "Highscore:{} ", highscore.get()).is_err() {
-                    error!("Failed to write to highscore ticker string");
-                }
-                *self = GameState::Intro(TextTicker::new(highscore_ticker_text, 0.014));
-            }
-            GameState::Intro(highscore) => {
-                highscore.update(delta_time_ms);
-                highscore.draw(dot_matrix);
-                dot_matrix.flush_buffer_to_spi();
-            }
-            GameState::Countdown(countdown) => {
-                *countdown -= delta_time_ms as i64;
-                let countdown_as_secs = 1 + (*countdown / 1000);
-                let countdown_as_bitmap =
-                    *font::get_font_data(&((b'0' + countdown_as_secs as u8) as char))
-                        .expect("a font for a number");
-
-                dot_matrix.draw(&countdown_as_bitmap);
-                dot_matrix.shift(2, 1);
-                dot_matrix.flush_buffer_to_spi();
-                dot_matrix.clear();
-
-                if *countdown <= 0 {
-                    self.start_new_game();
-                }
-            }
-            GameState::Playing { ball, pad, score } => {
-                pad.update(delta_time_ms);
-                ball.update(pad, delta_time_ms, score);
-
-                dot_matrix.clear();
-
-                pad.draw(dot_matrix);
-                ball.draw(dot_matrix);
-                dot_matrix.flush_buffer_to_spi();
-            }
-            GameState::GameOver(text_ticker) => {
-                text_ticker.update(delta_time_ms);
-                text_ticker.draw(dot_matrix);
-                dot_matrix.flush_buffer_to_spi();
-            }
-        }
-    }
-}
+static BTN_DOWN: AtomicBool = AtomicBool::new(false);
 
 #[embassy_executor::task]
-async fn game_loop(mut dot_matrix: DotMatrix<'static>, mut highscore: HighScore) {
+async fn game_loop(
+    mut dot_matrix: DotMatrix<'static>,
+    mut highscore: HighScore,
+    intro_message_override: Option<&'static str>,
+) {
     info!("Starting game loop!");
     let mut last_tick = Instant::now();
-    let mut game_state = GameState::New();
+
+    let mut game_state = GameState::Intro(TextTicker::new(
+        intro_message_override
+            .map(|s| String::try_from(s).expect("a string"))
+            .unwrap_or_else(|| format!("Highscore:{} ", highscore.get()).expect("a string")),
+        0.008,
+    ));
     loop {
         let now = Instant::now();
         let delta_time_ms = now.duration_since(last_tick).as_millis();
         last_tick = now;
-        if BTN.load(core::sync::atomic::Ordering::Relaxed) {
-            BTN.store(false, core::sync::atomic::Ordering::Relaxed);
-            match &mut game_state {
-                GameState::New() => {}
-                GameState::Intro(_) | GameState::GameOver(_) => {
-                    game_state = GameState::Countdown(3000);
-                }
-                GameState::Countdown(_) => {}
-                GameState::Playing { pad, .. } => {
-                    if let Pad::Alive { position, .. } = pad {
-                        position.next();
-                    }
-                }
-            }
+        if BTN_DOWN.load(core::sync::atomic::Ordering::Relaxed) {
+            game_state.button_click();
+            BTN_DOWN.store(false, core::sync::atomic::Ordering::Relaxed);
         }
 
-        game_state
-            .tick(delta_time_ms, &mut highscore, &mut dot_matrix)
-            .await;
+        game_state.tick(delta_time_ms, &mut highscore, &mut dot_matrix);
 
-        Timer::after(Duration::from_millis(16)).await;
+        Timer::after(Duration::from_millis(2)).await;
     }
 }
 
@@ -189,17 +90,23 @@ async fn main(spawner: Spawner) {
         InputConfig::default().with_pull(Pull::Up),
     );
     let mut highscore = HighScore::default();
+    let mut intro_text = None;
     if button.is_low() {
         info!("Resetting highscore");
+        intro_text = Some("RESET HIGHSCORE");
         highscore.set(0);
     }
 
-    spawner.spawn(game_loop(dot_matrix, highscore)).ok();
+    spawner
+        .spawn(game_loop(dot_matrix, highscore, intro_text))
+        .ok();
+
+    button.wait_for_high().await; // If highscore reset then wait for the button to be released
 
     info!("Starting main loop!");
     loop {
         button.wait_for_low().await;
-        BTN.store(true, core::sync::atomic::Ordering::Relaxed);
+        BTN_DOWN.store(true, core::sync::atomic::Ordering::Relaxed);
         Timer::after_millis(50).await;
         button.wait_for_high().await;
         Timer::after_millis(50).await;
