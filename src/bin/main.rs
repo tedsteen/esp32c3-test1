@@ -7,6 +7,7 @@
 )]
 
 use embassy_executor::Spawner;
+use esp32c3_test1::audio::{demo_tone_provider, StereoSink};
 use esp32c3_test1::game_state::GameState;
 use esp32c3_test1::highscore::HighScore;
 
@@ -54,15 +55,23 @@ async fn game_loop(
             BTN_DOWN.store(false, core::sync::atomic::Ordering::Relaxed);
         }
 
-        match game_state.advance(delta_time_ms, &mut highscore, &mut dot_matrix) {
+        match game_state
+            .advance(delta_time_ms, &mut highscore, &mut dot_matrix)
+            .await
+        {
             Ok(_) => {
                 last_tick = now;
             }
             Err(e) => error!("Failed to advance game state: {e:?}"),
         }
 
-        Timer::after(Duration::from_millis(2)).await;
+        Timer::after(Duration::from_millis(16)).await;
     }
+}
+
+#[embassy_executor::task]
+async fn audio_loop(audio: StereoSink<'static>) {
+    audio.run(demo_tone_provider(0.2)).await;
 }
 
 #[esp_hal_embassy::main]
@@ -80,16 +89,10 @@ async fn main(spawner: Spawner) {
         peripherals.GPIO0,
         peripherals.GPIO1,
         peripherals.GPIO2,
-    ) {
+    )
+    .await
+    {
         Ok(dot_matrix) => {
-            // let _audio = audio::Audio::new(
-            //     peripherals.DMA_CH2,
-            //     peripherals.I2S0,
-            //     peripherals.GPIO3,
-            //     peripherals.GPIO4,
-            //     peripherals.GPIO5,
-            // );
-
             let mut button = Input::new(
                 peripherals.GPIO9,
                 InputConfig::default().with_pull(Pull::Up),
@@ -105,6 +108,15 @@ async fn main(spawner: Spawner) {
             spawner
                 .spawn(game_loop(dot_matrix, highscore, intro_text))
                 .ok();
+
+            // let audio = StereoSink::new(
+            //     peripherals.DMA_CH2,
+            //     peripherals.I2S0,
+            //     peripherals.GPIO3,
+            //     peripherals.GPIO4,
+            //     peripherals.GPIO5,
+            // );
+            //spawner.spawn(audio_loop(audio)).ok();
 
             button.wait_for_high().await; // If highscore reset then wait for the button to be released
 

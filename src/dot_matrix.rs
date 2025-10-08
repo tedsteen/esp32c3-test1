@@ -5,14 +5,14 @@ use esp_hal::{
         Mode,
     },
     time::Rate,
-    Blocking,
+    Async,
 };
 use log::{debug, trace};
 
 pub struct DotMatrix<'a> {
     buffer: [u8; 8],
     intensity: u8,
-    spi: Spi<'a, Blocking>,
+    spi: Spi<'a, Async>,
 }
 
 type Result<T> = core::result::Result<T, DotMatrixError>;
@@ -24,7 +24,7 @@ pub enum DotMatrixError {
 }
 
 impl<'a> DotMatrix<'a> {
-    pub fn new(
+    pub async fn new(
         spi: impl Instance + 'a,
         clk: impl PeripheralOutput<'a>,
         cs: impl PeripheralOutput<'a>,
@@ -39,11 +39,14 @@ impl<'a> DotMatrix<'a> {
         .map_err(DotMatrixError::SpiInitFailed)?
         .with_cs(cs)
         .with_mosi(din)
-        .with_sck(clk);
+        .with_sck(clk)
+        .into_async();
 
         let initial_intensity = 0x0F;
 
-        initialise_spi(&mut spi, initial_intensity).map_err(DotMatrixError::TransferFailed)?;
+        initialise_spi(&mut spi, initial_intensity)
+            .await
+            .map_err(DotMatrixError::TransferFailed)?;
 
         Ok(Self {
             spi,
@@ -53,12 +56,13 @@ impl<'a> DotMatrix<'a> {
     }
 
     // NOTE: Max intensity is 0x0F
-    pub fn set_intensity(&mut self, intensity: u8) -> Result<()> {
+    pub async fn set_intensity(&mut self, intensity: u8) -> Result<()> {
         if self.intensity != intensity {
             self.intensity = intensity;
             debug!("Write intensity: 0x{:01x}", intensity);
             self.spi
-                .transfer(&mut [0x0A, intensity])
+                .transfer_in_place_async(&mut [0x0A, intensity])
+                .await
                 .map_err(DotMatrixError::TransferFailed)?;
         }
         Ok(())
@@ -86,10 +90,11 @@ impl<'a> DotMatrix<'a> {
         self.buffer[row as usize] = row_data;
     }
 
-    pub fn flush_buffer_to_spi(&mut self) -> Result<()> {
+    pub async fn flush_buffer_to_spi(&mut self) -> Result<()> {
         for i in 0..8 {
             self.spi
-                .transfer(&mut [i + 1, self.buffer[i as usize]])
+                .transfer_in_place_async(&mut [i + 1, self.buffer[i as usize]])
+                .await
                 .map_err(DotMatrixError::TransferFailed)?;
         }
         Ok(())
@@ -107,22 +112,23 @@ impl<'a> DotMatrix<'a> {
     }
 }
 
-fn initialise_spi(
-    spi: &mut Spi<'_, Blocking>,
+async fn initialise_spi(
+    spi: &mut Spi<'_, Async>,
     initial_intensity: u8,
 ) -> core::result::Result<(), esp_hal::spi::Error> {
     // Zero out all registers
     for cmd in 0..16 {
-        spi.transfer(&mut [cmd, 0x00])?;
+        spi.transfer_in_place_async(&mut [cmd, 0x00]).await?;
     }
     // Power Up Device
-    spi.transfer(&mut [0x0C, 0x01])?;
+    spi.transfer_in_place_async(&mut [0x0C, 0x01]).await?;
     // Set up Decode Mode to work with the MAX2719
-    spi.transfer(&mut [0x09, 0x00])?;
+    spi.transfer_in_place_async(&mut [0x09, 0x00]).await?;
     //Configure Scan Limit to work with the MAX2719
-    spi.transfer(&mut [0x0b, 0x07])?;
+    spi.transfer_in_place_async(&mut [0x0b, 0x07]).await?;
 
     //Set initial intensity
-    spi.transfer(&mut [0x0A, initial_intensity])?;
+    spi.transfer_in_place_async(&mut [0x0A, initial_intensity])
+        .await?;
     Ok(())
 }

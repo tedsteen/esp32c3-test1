@@ -37,7 +37,7 @@ impl GameState {
         }
     }
 
-    pub fn advance(
+    pub async fn advance(
         &mut self,
         delta_time_ms: u64,
         highscore: &mut HighScore,
@@ -94,6 +94,7 @@ impl GameState {
         }
         dot_matrix
             .flush_buffer_to_spi()
+            .await
             .map_err(GameStateError::AdvanceFailed)?;
         Ok(())
     }

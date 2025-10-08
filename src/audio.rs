@@ -1,96 +1,120 @@
 use core::f32::consts::PI;
-
-use esp_backtrace as _;
 use esp_hal::{
     dma::DmaChannelFor,
     dma_circular_buffers,
     gpio::interconnect::PeripheralOutput,
-    i2s::master::{AnyI2s, DataFormat, I2s, RegisterAccess, Standard},
-    peripheral::Peripheral,
+    i2s::{
+        master::{DataFormat, I2s, I2sTx, Instance, Standard},
+        AnyI2s,
+    },
+    time::Rate,
+    Async,
 };
 use libm::sin;
+use log::warn;
+type Sample = i16;
 
-const SAMPLE_RATE: u32 = 44100;
-const NUM_CHANNELS: usize = 2;
-const NUM_SAMPLES: usize = 1024 * 4;
+pub const SAMPLE_RATE: u32 = 44_100;
+const BYTES_PER_FRAME: usize = 2 * core::mem::size_of::<Sample>(); // 2ch * size_of_sample_size
 
-fn as_u8_slice(slice: &[i16]) -> &[u8] {
-    let ptr = slice.as_ptr().cast::<u8>();
-    let len = core::mem::size_of_val(slice);
-    unsafe { core::slice::from_raw_parts(ptr, len) }
+/// A minimal stereo I2S sink that pulls samples from a user callback and
+/// shoves them into a circular DMA buffer.
+pub struct StereoSink<'d> {
+    tx_buf: &'d [u8; BUF_BYTES],
+    tx: I2sTx<'d, Async>,
 }
 
-pub struct Audio {}
+// Tunable..
+pub const FRAMES_PER_BUF: usize = 1024 * 3;
+pub const BUF_BYTES: usize = FRAMES_PER_BUF * BYTES_PER_FRAME;
 
-impl Audio {
-    pub fn new<'d>(
-        dma_channel: impl Peripheral<P = impl DmaChannelFor<AnyI2s>> + 'd,
-        i2s: impl Peripheral<P = impl RegisterAccess> + 'd,
-        bclk: impl Peripheral<P = impl PeripheralOutput> + 'd,
-        ws: impl Peripheral<P = impl PeripheralOutput> + 'd,
-        dout: impl Peripheral<P = impl PeripheralOutput> + 'd,
+impl<'d> StereoSink<'d> {
+    pub fn new(
+        dma_ch: impl DmaChannelFor<AnyI2s<'d>>,
+        i2s_periph: impl Instance + 'd,
+        bck: impl PeripheralOutput<'d>,
+        lck: impl PeripheralOutput<'d>,
+        din: impl PeripheralOutput<'d>,
     ) -> Self {
-        let (_rx_buffer, rx_descriptors, tx_buffer, tx_descriptors) =
-            dma_circular_buffers!(0, NUM_SAMPLES * NUM_CHANNELS * core::mem::size_of::<i16>());
+        // rx is unused; descriptors are owned by HAL. tx_buf is a &[u8; BUF_BYTES].
+        let (_rx_buf, _rx_desc, tx_buf, tx_desc) = dma_circular_buffers!(0, BUF_BYTES);
 
         let i2s = I2s::new(
-            i2s,
+            i2s_periph,
             Standard::Philips,
             DataFormat::Data16Channel16,
-            fugit::HertzU32::Hz(SAMPLE_RATE),
-            dma_channel,
-            rx_descriptors,
-            tx_descriptors,
-        );
+            Rate::from_hz(SAMPLE_RATE),
+            dma_ch,
+        )
+        .into_async();
 
-        let mut i2s_tx = i2s
+        let tx = i2s
             .i2s_tx
-            .with_bclk(bclk)
-            .with_ws(ws)
-            .with_dout(dout)
-            .build();
+            .with_bclk(bck)
+            .with_ws(lck)
+            .with_dout(din)
+            .build(tx_desc);
 
-        let mut sample_clock = 0u32;
+        Self { tx_buf, tx }
+    }
 
-        let mut sin_sample = || {
-            sample_clock = (sample_clock + 1) % SAMPLE_RATE;
-            let smpl_f32 =
-                sin((2.0 * PI * 440.0 * sample_clock as f32 / SAMPLE_RATE as f32) as f64) as f32;
-
-            (smpl_f32 * i16::MAX as f32) as i16
-        };
-
-        log::info!("DMA buffer: {} bytes", tx_buffer.len(),);
-        let mut transaction = i2s_tx
-            .write_dma_circular(tx_buffer)
-            .expect("dma transaction");
+    /// Start streaming; pulls frames from `provider` forever.
+    /// `provider` should be fast and non-blocking.
+    pub async fn run(self, mut provider: impl FnMut() -> (Sample, Sample)) -> ! {
+        let mut txn = self.tx.write_dma_circular_async(self.tx_buf).expect("dma");
 
         loop {
-            match transaction.push_with(|samples| {
-                if samples.len() > 4 {
-                    let volume = 0.1;
-                    for s in samples.chunks_exact_mut(4) {
-                        let sample = (sin_sample() as f32 * volume) as i16;
-                        let (left, right) = (sample, -sample);
-                        s[0] = left.to_le_bytes()[0];
-                        s[1] = left.to_le_bytes()[1];
-                        s[2] = right.to_le_bytes()[0];
-                        s[3] = right.to_le_bytes()[1];
+            match txn
+                .push_with(|buf| {
+                    // ensure whole frames
+                    let full_bytes = buf.len() - (buf.len() % BYTES_PER_FRAME);
+                    if full_bytes == 0 {
+                        return 0;
                     }
-                    return samples.len();
-                }
-                0
-            }) {
-                Ok(sent) => {
-                    if sent > 0 {
-                        log::info!("Wrote {sent} bytes");
+                    let frames = full_bytes / BYTES_PER_FRAME;
+
+                    // write exactly full_bytes
+                    let mut p = 0;
+                    for _ in 0..frames {
+                        let (l, r) = provider();
+                        let lb = l.to_ne_bytes();
+                        let rb = r.to_ne_bytes();
+                        buf[p + 0] = lb[0];
+                        buf[p + 1] = lb[1];
+                        buf[p + 2] = rb[0];
+                        buf[p + 3] = rb[1];
+                        p += BYTES_PER_FRAME;
                     }
-                }
-                Err(error) => {
-                    log::warn!("Problem : {error:?}");
-                }
+
+                    // zero any tail (rare, but be safe)
+                    for b in &mut buf[p..] {
+                        *b = 0;
+                    }
+
+                    full_bytes
+                })
+                .await
+            {
+                Ok(_) => {}
+                Err(e) => warn!("i2s push_with: {e:?}"),
             }
         }
-        Self {}
+    }
+}
+
+/// Returns a provider producing a 440 Hz anti-phase stereo tone at `volume` (0..1).
+pub fn demo_tone_provider(volume: f32) -> impl FnMut() -> (Sample, Sample) {
+    let vol = volume.clamp(0.0, 1.0);
+    let mut phase = 0.0f32;
+    let inc = 2.0 * PI * 440.0 / SAMPLE_RATE as f32;
+
+    move || {
+        phase += inc;
+        if phase >= 2.0 * PI {
+            phase -= 2.0 * PI;
+        }
+        let x = (sin(phase as f64) as f32 * vol * Sample::MAX as f32)
+            .clamp(Sample::MIN as f32, Sample::MAX as f32) as Sample;
+        (x, -x)
     }
 }

@@ -1,5 +1,5 @@
 #![no_std]
-//pub mod audio;
+pub mod audio;
 pub mod ball;
 pub mod dot_matrix;
 pub mod font;
