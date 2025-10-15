@@ -15,7 +15,7 @@ fn as_i16(b: &[u8]) -> &[i16] {
 }
 
 const MAX_CHANS: usize = 8;
-pub const PIPE_BYTES: usize = DMA_TOTAL * 4;
+pub const PIPE_BYTES: usize = DMA_TOTAL * 30;
 
 // one global bank
 static mut PIPES: [Pipe<CriticalSectionRawMutex, PIPE_BYTES>; MAX_CHANS] =

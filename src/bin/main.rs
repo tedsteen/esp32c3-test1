@@ -6,16 +6,15 @@
     holding buffers for the duration of a data transfer."
 )]
 
-use embassy_executor::{SendSpawner, Spawner};
-use embedded_io_async::Write;
-use esp32c3_test1::audio::mixer::AudioProducerChannel;
-use esp32c3_test1::audio::{AudioEngine, Sample, SAMPLE_RATE};
+use embassy_executor::{task, SendSpawner, Spawner};
+use esp32c3_test1::audio::mixer::{AudioProducerChannel, Mixer};
+use esp32c3_test1::audio::run_audio_loop;
+use esp32c3_test1::audio::sfx::{self, pattern_demo};
 use esp32c3_test1::game_state::GameState;
 use esp32c3_test1::highscore::HighScore;
 use esp_hal::interrupt::software::SoftwareInterruptControl;
 use esp_hal::interrupt::Priority;
 use esp_hal_embassy::InterruptExecutor;
-use libm::sin;
 
 use core::sync::atomic::AtomicBool;
 use embassy_time::{Duration, Instant, Timer};
@@ -37,6 +36,7 @@ fn panic(i: &core::panic::PanicInfo) -> ! {
 esp_bootloader_esp_idf::esp_app_desc!();
 
 static BTN_DOWN: AtomicBool = AtomicBool::new(false);
+const MIXER_CHANNELS: usize = 2;
 
 #[embassy_executor::task]
 async fn game_loop(
@@ -78,49 +78,14 @@ async fn game_loop(
 
 #[embassy_executor::task]
 async fn audio_worker(
-    audio_engine: AudioEngine<2>,
+    audio_mixer: Mixer<MIXER_CHANNELS>,
     dma_ch: esp_hal::peripherals::DMA_CH0<'static>,
     i2s_periph: esp_hal::peripherals::I2S0<'static>,
     bck: esp_hal::peripherals::GPIO3<'static>,
     lrck: esp_hal::peripherals::GPIO4<'static>,
     dout: esp_hal::peripherals::GPIO5<'static>,
 ) {
-    loop {
-        audio_engine
-            .start(dma_ch, i2s_periph, bck, lrck, dout)
-            .await;
-    }
-}
-#[embassy_executor::task]
-async fn audio_sender(mut audio_sender: [AudioProducerChannel; 2]) {
-    let mut provider = demo_tone_provider(0.04);
-    const FRAMES: usize = 1800;
-    let mut frames = [Sample::default(); FRAMES];
-    loop {
-        let before_compute = Instant::now();
-        for i in 0..FRAMES / 2 {
-            let (l, r) = provider();
-            let j = i * 2;
-            frames[j] = l;
-            frames[j + 1] = r;
-        }
-        let after_compute = Instant::now();
-        audio_sender[0]
-            .write_all(bytemuck::cast_slice(&frames))
-            .await
-            .expect("All frames to be written");
-        let after_send = Instant::now();
-
-        let compute_time = after_compute.saturating_duration_since(before_compute);
-        let send_time = after_send.saturating_duration_since(after_compute);
-        let total_time = after_send.saturating_duration_since(before_compute);
-        info!(
-            "Audio send: compute: {}, send: {}, total: {}",
-            compute_time.as_millis(),
-            send_time.as_millis(),
-            total_time.as_millis()
-        )
-    }
+    run_audio_loop(audio_mixer, dma_ch, i2s_periph, bck, lrck, dout).await;
 }
 
 static mut HI_EXEC: Option<InterruptExecutor<0>> = None;
@@ -160,30 +125,28 @@ async fn main(spawner: Spawner) {
                 .spawn(game_loop(dot_matrix, highscore, intro_text))
                 .ok();
 
-            let audio_engine: AudioEngine<2> = AudioEngine::new();
-            //audio_engine.prefill(&[0, 0, 0]);
+            let audio_mixer = Mixer::<MIXER_CHANNELS>::new();
+            let (music_tx, sfx_tx) = (audio_mixer.writers[0], audio_mixer.writers[1]);
 
-            let tx = audio_engine.mixer.writers;
+            spawner.spawn(music_task(music_tx, sfx_tx)).unwrap();
 
+            // Create a higher priority spawner
             let sic = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
             let swi0 = sic.software_interrupt0;
-
-            let sp: SendSpawner = unsafe {
+            let high_priority_spawner: SendSpawner = unsafe {
                 HI_EXEC = Some(InterruptExecutor::<0>::new(swi0));
                 HI_EXEC.as_mut().unwrap().start(Priority::Priority3)
             };
-
-            spawner.spawn(audio_sender(tx)).ok();
-
-            sp.spawn(audio_worker(
-                audio_engine,
-                peripherals.DMA_CH0,
-                peripherals.I2S0,
-                peripherals.GPIO3,
-                peripherals.GPIO4,
-                peripherals.GPIO5,
-            ))
-            .expect("spawn audio worker");
+            high_priority_spawner
+                .spawn(audio_worker(
+                    audio_mixer,
+                    peripherals.DMA_CH0,
+                    peripherals.I2S0,
+                    peripherals.GPIO3,
+                    peripherals.GPIO4,
+                    peripherals.GPIO5,
+                ))
+                .expect("spawn audio worker");
 
             button.wait_for_high().await; // If highscore reset then wait for the button to be released
 
@@ -191,16 +154,8 @@ async fn main(spawner: Spawner) {
             loop {
                 button.wait_for_low().await;
                 BTN_DOWN.store(true, core::sync::atomic::Ordering::Relaxed);
-                tx[1]
-                    .write(&[
-                        200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 0, 0, 0, 0, 0,
-                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 200, 200, 200, 200, 200, 200, 200, 200, 200,
-                        200, 200, 200, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 200, 200, 200,
-                        200, 200, 200, 200, 200, 200, 200, 200, 200, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-                        0, 0, 0, 0, 0,
-                    ])
-                    .await;
-                Timer::after_millis(50).await;
+                sfx::blip(sfx_tx, 440.0, 50, 0x05FF, 0).await;
+                //Timer::after_millis(50).await;
                 button.wait_for_high().await;
                 Timer::after_millis(50).await;
             }
@@ -210,19 +165,9 @@ async fn main(spawner: Spawner) {
         }
     }
 }
-
-/// Stable 440 Hz stereo (L = +, R = -), with clamped volume.
-pub fn demo_tone_provider(volume: f32) -> impl FnMut() -> (Sample, Sample) {
-    let volume = volume.clamp(0.0, 1.0) as f64;
-    const FREQ: f64 = 440.0_f64;
-    let mut phase_inc = 2.0_f64 * core::f32::consts::PI as f64 * FREQ / SAMPLE_RATE as f64;
-    let mut phase = 0.0_f64;
-    let volume = volume * Sample::MAX as f64;
-    move || {
-        phase_inc -= 0.000001;
-        phase += phase_inc;
-        let v = (sin(phase) * volume) as Sample;
-        (v, -v)
-        //(0, 0)
+#[task]
+pub async fn music_task(music_tx: AudioProducerChannel, sfx_tx: AudioProducerChannel) {
+    loop {
+        pattern_demo(music_tx, sfx_tx).await;
     }
 }
