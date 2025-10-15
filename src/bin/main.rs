@@ -6,10 +6,16 @@
     holding buffers for the duration of a data transfer."
 )]
 
-use embassy_executor::Spawner;
-use esp32c3_test1::audio::{demo_tone_provider, StereoSink};
+use embassy_executor::{SendSpawner, Spawner};
+use embedded_io_async::Write;
+use esp32c3_test1::audio::mixer::AudioProducerChannel;
+use esp32c3_test1::audio::{AudioEngine, Sample, SAMPLE_RATE};
 use esp32c3_test1::game_state::GameState;
 use esp32c3_test1::highscore::HighScore;
+use esp_hal::interrupt::software::SoftwareInterruptControl;
+use esp_hal::interrupt::Priority;
+use esp_hal_embassy::InterruptExecutor;
+use libm::sin;
 
 use core::sync::atomic::AtomicBool;
 use embassy_time::{Duration, Instant, Timer};
@@ -21,7 +27,8 @@ use esp_hal::timer::systimer::SystemTimer;
 use heapless::{format, String};
 use log::{error, info};
 #[panic_handler]
-fn panic(_: &core::panic::PanicInfo) -> ! {
+fn panic(i: &core::panic::PanicInfo) -> ! {
+    info!("PANIC: {i:?}");
     loop {}
 }
 
@@ -70,9 +77,53 @@ async fn game_loop(
 }
 
 #[embassy_executor::task]
-async fn audio_loop(audio: StereoSink<'static>) {
-    audio.run(demo_tone_provider(0.2)).await;
+async fn audio_worker(
+    audio_engine: AudioEngine<2>,
+    dma_ch: esp_hal::peripherals::DMA_CH0<'static>,
+    i2s_periph: esp_hal::peripherals::I2S0<'static>,
+    bck: esp_hal::peripherals::GPIO3<'static>,
+    lrck: esp_hal::peripherals::GPIO4<'static>,
+    dout: esp_hal::peripherals::GPIO5<'static>,
+) {
+    loop {
+        audio_engine
+            .start(dma_ch, i2s_periph, bck, lrck, dout)
+            .await;
+    }
 }
+#[embassy_executor::task]
+async fn audio_sender(mut audio_sender: [AudioProducerChannel; 2]) {
+    let mut provider = demo_tone_provider(0.04);
+    const FRAMES: usize = 1800;
+    let mut frames = [Sample::default(); FRAMES];
+    loop {
+        let before_compute = Instant::now();
+        for i in 0..FRAMES / 2 {
+            let (l, r) = provider();
+            let j = i * 2;
+            frames[j] = l;
+            frames[j + 1] = r;
+        }
+        let after_compute = Instant::now();
+        audio_sender[0]
+            .write_all(bytemuck::cast_slice(&frames))
+            .await
+            .expect("All frames to be written");
+        let after_send = Instant::now();
+
+        let compute_time = after_compute.saturating_duration_since(before_compute);
+        let send_time = after_send.saturating_duration_since(after_compute);
+        let total_time = after_send.saturating_duration_since(before_compute);
+        info!(
+            "Audio send: compute: {}, send: {}, total: {}",
+            compute_time.as_millis(),
+            send_time.as_millis(),
+            total_time.as_millis()
+        )
+    }
+}
+
+static mut HI_EXEC: Option<InterruptExecutor<0>> = None;
 
 #[esp_hal_embassy::main]
 async fn main(spawner: Spawner) {
@@ -109,14 +160,30 @@ async fn main(spawner: Spawner) {
                 .spawn(game_loop(dot_matrix, highscore, intro_text))
                 .ok();
 
-            // let audio = StereoSink::new(
-            //     peripherals.DMA_CH2,
-            //     peripherals.I2S0,
-            //     peripherals.GPIO3,
-            //     peripherals.GPIO4,
-            //     peripherals.GPIO5,
-            // );
-            //spawner.spawn(audio_loop(audio)).ok();
+            let audio_engine: AudioEngine<2> = AudioEngine::new();
+            //audio_engine.prefill(&[0, 0, 0]);
+
+            let tx = audio_engine.mixer.writers;
+
+            let sic = SoftwareInterruptControl::new(peripherals.SW_INTERRUPT);
+            let swi0 = sic.software_interrupt0;
+
+            let sp: SendSpawner = unsafe {
+                HI_EXEC = Some(InterruptExecutor::<0>::new(swi0));
+                HI_EXEC.as_mut().unwrap().start(Priority::Priority3)
+            };
+
+            spawner.spawn(audio_sender(tx)).ok();
+
+            sp.spawn(audio_worker(
+                audio_engine,
+                peripherals.DMA_CH0,
+                peripherals.I2S0,
+                peripherals.GPIO3,
+                peripherals.GPIO4,
+                peripherals.GPIO5,
+            ))
+            .expect("spawn audio worker");
 
             button.wait_for_high().await; // If highscore reset then wait for the button to be released
 
@@ -124,6 +191,15 @@ async fn main(spawner: Spawner) {
             loop {
                 button.wait_for_low().await;
                 BTN_DOWN.store(true, core::sync::atomic::Ordering::Relaxed);
+                tx[1]
+                    .write(&[
+                        200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 200, 0, 0, 0, 0, 0,
+                        0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 200, 200, 200, 200, 200, 200, 200, 200, 200,
+                        200, 200, 200, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 200, 200, 200,
+                        200, 200, 200, 200, 200, 200, 200, 200, 200, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
+                        0, 0, 0, 0, 0,
+                    ])
+                    .await;
                 Timer::after_millis(50).await;
                 button.wait_for_high().await;
                 Timer::after_millis(50).await;
@@ -132,5 +208,21 @@ async fn main(spawner: Spawner) {
         Err(e) => {
             panic!("Failed to setup dot matrix display: {e:?}");
         }
+    }
+}
+
+/// Stable 440 Hz stereo (L = +, R = -), with clamped volume.
+pub fn demo_tone_provider(volume: f32) -> impl FnMut() -> (Sample, Sample) {
+    let volume = volume.clamp(0.0, 1.0) as f64;
+    const FREQ: f64 = 440.0_f64;
+    let mut phase_inc = 2.0_f64 * core::f32::consts::PI as f64 * FREQ / SAMPLE_RATE as f64;
+    let mut phase = 0.0_f64;
+    let volume = volume * Sample::MAX as f64;
+    move || {
+        phase_inc -= 0.000001;
+        phase += phase_inc;
+        let v = (sin(phase) * volume) as Sample;
+        (v, -v)
+        //(0, 0)
     }
 }

@@ -632,9 +632,12 @@ dependencies = [
 name = "esp32c3_test1"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
  "critical-section",
  "embassy-executor",
+ "embassy-sync 0.7.2",
  "embassy-time",
+ "embedded-io-async",
  "embedded-storage",
  "esp-bootloader-esp-idf",
  "esp-hal",
